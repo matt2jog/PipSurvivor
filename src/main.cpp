@@ -1,5 +1,7 @@
 #include <Arduino.h>
 #include <Wire.h>
+#include <WiFi.h>
+#include <WebServer.h>
 
 #include "adapters/alert_detection_adapter.h"
 #include "adapters/barometer_altitude_adapter.h"
@@ -100,6 +102,13 @@ class MainDevice {
 
   static MainDevice* instance() {
     return instance_;
+  }
+
+  size_t getMessageCount() const { return message_count_; }
+  
+  String getMessage(size_t index) const {
+    if (index >= message_count_) return "";
+    return message_feed_[index];
   }
 
   bool begin() {
@@ -541,6 +550,120 @@ AlertDetectionAdapter g_alert_detection(
 
 MainDevice g_device(g_display, g_buttons, g_radio, g_alert_detection);
 
+WebServer g_web_server(80);
+
+void handleRoot() {
+  String html = R"(
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta http-equiv="refresh" content="5">
+  <title>PipSurvivor Receiver</title>
+  <style>
+    :root {
+      --bg: #0f172a;
+      --card-bg: #1e293b;
+      --text: #f8fafc;
+      --accent: #38bdf8;
+      --border: #334155;
+    }
+    body {
+      background-color: var(--bg);
+      color: var(--text);
+      font-family: 'Inter', -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+      margin: 0;
+      padding: 2rem;
+      display: flex;
+      justify-content: center;
+    }
+    .container {
+      max-width: 600px;
+      width: 100%;
+    }
+    h1 {
+      color: var(--accent);
+      text-align: center;
+      margin-bottom: 2rem;
+      letter-spacing: -0.05em;
+    }
+    .messages {
+      display: flex;
+      flex-direction: column;
+      gap: 1rem;
+    }
+    .message {
+      background: var(--card-bg);
+      padding: 1.2rem;
+      border-radius: 12px;
+      border: 1px solid var(--border);
+      box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1);
+      font-size: 1.1rem;
+      line-height: 1.5;
+      animation: fadeIn 0.4s ease-out;
+    }
+    .rx-badge {
+      display: inline-block;
+      background: rgba(56, 189, 248, 0.15);
+      color: var(--accent);
+      padding: 0.2rem 0.6rem;
+      border-radius: 4px;
+      font-size: 0.8rem;
+      font-weight: 600;
+      margin-bottom: 0.5rem;
+      text-transform: uppercase;
+    }
+    @keyframes fadeIn {
+      from { opacity: 0; transform: translateY(10px); }
+      to { opacity: 1; transform: translateY(0); }
+    }
+    .empty { text-align: center; color: #94a3b8; padding: 2rem; }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <h1>Receiving Feed</h1>
+    <div class="messages">
+)";
+
+  if (g_device.getMessageCount() == 0) {
+    html += "<div class='empty'>No messages received yet.</div>";
+  } else {
+    size_t count = g_device.getMessageCount();
+    // Show up to 5 last messages correctly
+    size_t start_idx = count >= 5 ? count - 5 : 0;
+    for (int i = count - 1; i >= static_cast<int>(start_idx); --i) {
+      String msg = g_device.getMessage(i);
+      if (msg.startsWith("RX:")) {
+        msg = msg.substring(3);
+      }
+      html += "<div class='message'><div class='rx-badge'>Inbound</div>" + msg + "</div>";
+    }
+  }
+
+  html += R"(
+    </div>
+  </div>
+</body>
+</html>
+)";
+
+  g_web_server.send(200, "text/html", html);
+}
+
+void initWebServer() {
+  if (!DeviceSettings::kEnableWebServer) return;
+
+  Serial.println("[WIFI] Starting AP...");
+  WiFi.softAP(DeviceSettings::kApSsid, DeviceSettings::kApPassword);
+  
+  g_web_server.on("/", handleRoot);
+  g_web_server.begin();
+  Serial.print("[WIFI] AP started. Root IP: ");
+  Serial.println(WiFi.softAPIP());
+}
+
 }  // namespace
 
 void setup() {
@@ -580,8 +703,14 @@ void setup() {
   const bool ok = g_device.begin();
   Serial.print("[MAIN_DEVICE] begin status: ");
   Serial.println(ok ? "OK" : "PARTIAL/FAIL");
+
+  initWebServer();
 }
 
 void loop() {
   g_device.loop();
+  
+  if (DeviceSettings::kEnableWebServer) {
+    g_web_server.handleClient();
+  }
 }
