@@ -31,10 +31,15 @@ static constexpr bool kEnableBarometer = false;
 static constexpr bool kEnableWaterSensor = false;
 
 // 4x4 matrix button panel for UI input.
-static constexpr bool kEnableButtons = false;
+static constexpr bool kEnableButtons = true;
 
 // LCD display output (set false to use serial-mirror only).
 static constexpr bool kEnableDisplay = false;
+
+// Web server / hotspot output (typically used on receiver).
+static constexpr bool kEnableWebServer = !SENDER;
+static constexpr char kApSsid[] = "PipSurvivor-Receiver";
+static constexpr char kApPassword[] = "survivor123!";
 
 // Alert detection subsystem (jerk + altitude + submersion).
 // Automatically skips any sensor whose kEnable* flag is false.
@@ -48,8 +53,18 @@ static constexpr uint8_t kRadioCr = 7;
 static constexpr uint8_t kRadioBw = 1;
 static constexpr uint8_t kRadioPreamble = 12;
 static constexpr uint16_t kRadioAddressSender = 1;
-static constexpr uint16_t kRadioAddressReceiver = 2;
+static constexpr uint16_t kRadioAddressReceiver = 2; // For directed non-mesh mode if needed
 static constexpr uint32_t kPingIntervalMs = 2000;
+
+// Mesh routing constants
+static constexpr uint8_t kMeshMaxHops = 7;
+static constexpr size_t kMeshCacheSize = 50;
+static constexpr uint32_t kMeshJitterMinMs = 100;
+static constexpr uint32_t kMeshJitterMaxMs = 500;
+static constexpr uint32_t kMeshAckTimeoutMs = 2000;
+static constexpr uint8_t kMeshMaxRetries = 3;
+static constexpr uint16_t kMeshBroadcastAddress = 0; // RYLR998 broadcast
+
 
 // Number of message entries retained in the on-device inbox/feed.
 static constexpr size_t kMaxFeedMessages = 24;

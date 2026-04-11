@@ -87,7 +87,7 @@ TransitionResult transitionState(
       if (input == KeyInput::A) {
         return TransitionResult{DisplayState::Menu, true};
       }
-      if (input == KeyInput::C) {
+      if (input == KeyInput::C || input == KeyInput::Hash) {
         return TransitionResult{DisplayState::Initial, true};
       }
       if (input == KeyInput::B || input == KeyInput::D || isNumericKey(input)) {
@@ -135,7 +135,7 @@ DisplayFrame buildMenuFrame(uint8_t width) {
 DisplayFrame buildComposeFrame(const String& draft, size_t cursorOffset, uint8_t width) {
   return DisplayFrame{
       windowText(draft, cursorOffset, width),
-      normalizeLineForWidth("A:Back C:Send", width),
+      normalizeLineForWidth("A:Back #:Send", width),
   };
 }
 

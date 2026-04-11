@@ -34,30 +34,31 @@ bool MatrixButtonPanelAdapter::begin() {
 }
 
 KeyInput MatrixButtonPanelAdapter::mapKey(uint8_t row, uint8_t col) {
-  // Standard 4x4 keypad matrix mapping:
-  // [1] [2] [3] [A]
-  // [4] [5] [6] [B]
-  // [7] [8] [9] [C]
-  // [*] [0] [#] [D]
-  if (row == 0 && col == 0) return KeyInput::K1;
-  if (row == 0 && col == 1) return KeyInput::K2;
-  if (row == 0 && col == 2) return KeyInput::K3;
+  // Corrected mapping derived from observed hardware scan values.
+  // Physical layout (what's printed on the keycap):
+  // [D] [C] [B] [A]
+  // [#] [9] [6] [3]
+  // [0] [8] [5] [2]
+  // [*] [7] [4] [1]
+  if (row == 0 && col == 0) return KeyInput::D;
+  if (row == 0 && col == 1) return KeyInput::C;
+  if (row == 0 && col == 2) return KeyInput::B;
   if (row == 0 && col == 3) return KeyInput::A;
 
-  if (row == 1 && col == 0) return KeyInput::K4;
-  if (row == 1 && col == 1) return KeyInput::K5;
+  if (row == 1 && col == 0) return KeyInput::Hash;
+  if (row == 1 && col == 1) return KeyInput::K9;
   if (row == 1 && col == 2) return KeyInput::K6;
-  if (row == 1 && col == 3) return KeyInput::B;
+  if (row == 1 && col == 3) return KeyInput::K3;
 
-  if (row == 2 && col == 0) return KeyInput::K7;
+  if (row == 2 && col == 0) return KeyInput::K0;
   if (row == 2 && col == 1) return KeyInput::K8;
-  if (row == 2 && col == 2) return KeyInput::K9;
-  if (row == 2 && col == 3) return KeyInput::C;
+  if (row == 2 && col == 2) return KeyInput::K5;
+  if (row == 2 && col == 3) return KeyInput::K2;
 
   if (row == 3 && col == 0) return KeyInput::Star;
-  if (row == 3 && col == 1) return KeyInput::K0;
-  if (row == 3 && col == 2) return KeyInput::Hash;
-  if (row == 3 && col == 3) return KeyInput::D;
+  if (row == 3 && col == 1) return KeyInput::K7;
+  if (row == 3 && col == 2) return KeyInput::K4;
+  if (row == 3 && col == 3) return KeyInput::K1;
 
   return KeyInput::None;
 }
@@ -91,6 +92,16 @@ KeyInput MatrixButtonPanelAdapter::scanRawKey() const {
 bool MatrixButtonPanelAdapter::readKey(KeyInput& key) {
   const KeyInput raw = scanRawKey();
   const uint32_t now = millis();
+
+  // Debug: log raw scans periodically to diagnose wiring
+  static uint32_t last_raw_debug_ms = 0;
+  if ((now - last_raw_debug_ms) >= 500) {
+    if (raw != KeyInput::None) {
+      Serial.print("[BTN_RAW] scan=");
+      Serial.println(static_cast<int>(raw));
+    }
+    last_raw_debug_ms = now;
+  }
 
   if (raw != last_raw_) {
     last_raw_ = raw;

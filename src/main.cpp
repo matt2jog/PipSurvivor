@@ -46,21 +46,21 @@ const char* multiTapChars(KeyInput key) {
     case KeyInput::K1:
       return "1.,!?";
     case KeyInput::K2:
-      return "ABC2";
+      return "2ABC";
     case KeyInput::K3:
-      return "DEF3";
+      return "3DEF";
     case KeyInput::K4:
-      return "GHI4";
+      return "4GHI";
     case KeyInput::K5:
-      return "JKL5";
+      return "5JKL";
     case KeyInput::K6:
-      return "MNO6";
+      return "6MNO";
     case KeyInput::K7:
-      return "PQRS7";
+      return "7PQRS";
     case KeyInput::K8:
-      return "TUV8";
+      return "8TUV";
     case KeyInput::K9:
-      return "WXYZ9";
+      return "9WXYZ";
     default:
       return "";
   }
@@ -138,19 +138,8 @@ class MainDevice {
       }
     }
 
-    if (DeviceSettings::kEnableRadio && DeviceSettings::SENDER) {
-      const uint32_t now = millis();
-      if ((now - last_ping_ms_) >= DeviceSettings::kPingIntervalMs) {
-        ping_count_++;
-        const String ping = "PING #" + String(ping_count_);
-        if (radio_.sendMessage(ping, 1)) {
-          Serial.println("[RADIO_TX] " + ping);
-          addFeedMessage("TX:" + ping);
-          render_dirty_ = true;
-        }
-        last_ping_ms_ = now;
-      }
-    }
+
+
 
     processQueuedAlerts();
 
@@ -160,6 +149,8 @@ class MainDevice {
     if (DeviceSettings::kEnableButtons) {
       KeyInput key = KeyInput::None;
       if (buttons_.readKey(key)) {
+        Serial.print("[BTN] key=");
+        Serial.println(static_cast<int>(key));
         handleKey(key);
         render_dirty_ = true;
       }
@@ -347,7 +338,7 @@ class MainDevice {
       return;
     }
 
-    if (key == KeyInput::C) {
+    if (key == KeyInput::C || key == KeyInput::Hash) {
       commitPendingMultiTap();
 
       if (compose_draft_.length() == 0) {
@@ -359,6 +350,7 @@ class MainDevice {
         return;
       }
 
+      Serial.println("[RADIO_TX] " + compose_draft_);
       addFeedMessage("TX:" + compose_draft_);
       compose_draft_ = "";
       state_ = DisplayState::Initial;
