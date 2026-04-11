@@ -9,6 +9,48 @@
 
 namespace DeviceSettings {
 
+// Role: set via build flag -DDEVICE_IS_SENDER=1 or 0
+static constexpr bool SENDER = DEVICE_IS_SENDER;
+
+// ============================================================
+// Component enable flags.
+// Set to true only when the hardware is physically connected.
+// ============================================================
+
+// Radio: true enables RYLR998/ESPNow TX+RX, false uses Mock (no-op).
+// Note: radio adapter type is still selected by PIPSURVIVOR_RADIO_* build flag.
+static constexpr bool kEnableRadio = true;
+
+// MPU6050 gyroscope for jerk/impact detection.
+static constexpr bool kEnableGyroscope = false;
+
+// BMP280 barometer for altitude change detection.
+static constexpr bool kEnableBarometer = false;
+
+// Analog/digital water level sensor for submersion detection.
+static constexpr bool kEnableWaterSensor = false;
+
+// 4x4 matrix button panel for UI input.
+static constexpr bool kEnableButtons = false;
+
+// LCD display output (set false to use serial-mirror only).
+static constexpr bool kEnableDisplay = false;
+
+// Alert detection subsystem (jerk + altitude + submersion).
+// Automatically skips any sensor whose kEnable* flag is false.
+static constexpr bool kEnableAlertDetection = kEnableGyroscope || kEnableBarometer || kEnableWaterSensor;
+
+// Radio frequency and network parameters (RYLR998).
+static constexpr uint32_t kRadioBand = 915000000;
+static constexpr uint8_t kRadioNetworkId = 18;
+static constexpr uint8_t kRadioSf = 9;
+static constexpr uint8_t kRadioCr = 7;
+static constexpr uint8_t kRadioBw = 1;
+static constexpr uint8_t kRadioPreamble = 12;
+static constexpr uint16_t kRadioAddressSender = 1;
+static constexpr uint16_t kRadioAddressReceiver = 2;
+static constexpr uint32_t kPingIntervalMs = 2000;
+
 // Number of message entries retained in the on-device inbox/feed.
 static constexpr size_t kMaxFeedMessages = 24;
 

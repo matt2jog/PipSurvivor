@@ -18,6 +18,9 @@ class RadioPort {
   virtual bool sendMessage(const String& message, uint8_t hops) = 0;
   virtual bool sendAlert(const String& alert, uint8_t hops) = 0;
 
+  // Called once during setup to configure the hardware/module.
+  virtual bool begin() { return true; }
+
   // Called from loop() so the adapter can process incoming packets.
   virtual void poll() = 0;
 

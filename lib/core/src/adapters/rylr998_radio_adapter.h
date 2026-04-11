@@ -15,6 +15,8 @@ class Rylr998RadioAdapter : public RadioPort {
       uint16_t destinationAddress,
       uint32_t baudRate = 115200);
 
+  bool begin() override;
+
   bool sendMessage(const String& message, uint8_t hops) override;
   bool sendAlert(const String& alert, uint8_t hops) override;
   void poll() override;
@@ -28,6 +30,7 @@ class Rylr998RadioAdapter : public RadioPort {
   uint16_t destination_address_;
   char line_buffer_[kLineBufferSize];
   size_t line_length_;
+  bool initialized_;
 };
 
 #endif

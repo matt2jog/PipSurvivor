@@ -85,6 +85,8 @@ class MainDevice {
         alert_queue_count_(0),
         last_display_render_ms_(0),
         last_alert_poll_ms_(0),
+        last_ping_ms_(0),
+        ping_count_(0),
         pending_key_(KeyInput::None),
         pending_char_index_(0),
         pending_char_pos_(-1),
@@ -103,42 +105,64 @@ class MainDevice {
   bool begin() {
     display_.clear();
 
-    const bool display_ok = true;
-    const bool buttons_ok = buttons_.begin();
-    const bool radio_ok = true;
-    const bool alert_ok = alert_detection_.begin();
+    const bool buttons_ok = DeviceSettings::kEnableButtons ? buttons_.begin() : true;
+    const bool alert_ok = DeviceSettings::kEnableAlertDetection ? alert_detection_.begin() : true;
 
     radio_.setReceiveCallback(MainDevice::onRadioMessageStatic);
 
-    AlertDetectionCallbackParams cb{};
-    cb.source = "main_device";
-    cb.channel = "radio-alert";
-    cb.severity = 2;
-    alert_detection_.setCallback(MainDevice::onAlertStatic, cb);
+    if (DeviceSettings::kEnableAlertDetection) {
+      AlertDetectionCallbackParams cb{};
+      cb.source = "main_device";
+      cb.channel = "radio-alert";
+      cb.severity = 2;
+      alert_detection_.setCallback(MainDevice::onAlertStatic, cb);
+    }
 
     addFeedMessage("System ready");
     render_dirty_ = true;
 
-    return display_ok && buttons_ok && radio_ok && alert_ok;
+    return buttons_ok && alert_ok;
   }
 
   void loop() {
-    radio_.poll();
+    if (DeviceSettings::kEnableRadio) {
+      radio_.poll();
+    }
 
-    const uint32_t now = millis();
-    if ((now - last_alert_poll_ms_) >= DeviceSettings::kAlertPollMs) {
-      AlertDetectionReading reading{};
-      alert_detection_.poll(reading);
-      last_alert_poll_ms_ = now;
+    if (DeviceSettings::kEnableAlertDetection) {
+      const uint32_t now = millis();
+      if ((now - last_alert_poll_ms_) >= DeviceSettings::kAlertPollMs) {
+        AlertDetectionReading reading{};
+        alert_detection_.poll(reading);
+        last_alert_poll_ms_ = now;
+      }
+    }
+
+    if (DeviceSettings::kEnableRadio && DeviceSettings::SENDER) {
+      const uint32_t now = millis();
+      if ((now - last_ping_ms_) >= DeviceSettings::kPingIntervalMs) {
+        ping_count_++;
+        const String ping = "PING #" + String(ping_count_);
+        if (radio_.sendMessage(ping, 1)) {
+          Serial.println("[RADIO_TX] " + ping);
+          addFeedMessage("TX:" + ping);
+          render_dirty_ = true;
+        }
+        last_ping_ms_ = now;
+      }
     }
 
     processQueuedAlerts();
+
+    const uint32_t now = millis();
     maybeCommitPendingMultiTap(now);
 
-    KeyInput key = KeyInput::None;
-    if (buttons_.readKey(key)) {
-      handleKey(key);
-      render_dirty_ = true;
+    if (DeviceSettings::kEnableButtons) {
+      KeyInput key = KeyInput::None;
+      if (buttons_.readKey(key)) {
+        handleKey(key);
+        render_dirty_ = true;
+      }
     }
 
     if (render_dirty_ || (now - last_display_render_ms_) >= DeviceSettings::kDisplayRefreshMs) {
@@ -166,6 +190,7 @@ class MainDevice {
   }
 
   void onRadioMessage(const String& message) {
+    Serial.println("[RADIO_RX] " + message);
     addFeedMessage("RX:" + message);
     render_dirty_ = true;
   }
@@ -472,6 +497,8 @@ class MainDevice {
 
   uint32_t last_display_render_ms_;
   uint32_t last_alert_poll_ms_;
+  uint32_t last_ping_ms_;
+  uint16_t ping_count_;
   bool render_dirty_;
   DisplayFrame last_rendered_frame_;
 };
@@ -487,7 +514,10 @@ MatrixButtonPanelAdapter g_buttons(
 #if defined(PIPSURVIVOR_RADIO_ESPNOW)
 EspNowRadioAdapter g_radio_impl(DeviceSettings::buildRadioConfig(), 0);
 #elif defined(PIPSURVIVOR_RADIO_RYLR998)
-Rylr998RadioAdapter g_radio_impl(DeviceSettings::buildRadioConfig(), Serial2, 1, 115200);
+static constexpr uint16_t kRylrDest = DeviceSettings::SENDER
+    ? DeviceSettings::kRadioAddressReceiver
+    : DeviceSettings::kRadioAddressSender;
+Rylr998RadioAdapter g_radio_impl(DeviceSettings::buildRadioConfig(), Serial2, kRylrDest, 115200);
 #else
 MockRadioAdapter g_radio_impl(DeviceSettings::buildRadioConfig());
 #endif
@@ -525,13 +555,31 @@ void setup() {
   Serial.begin(115200);
   delay(200);
 
-  // Initialize the specific I2C bus pins required by this board configuration.
-  Wire.begin(DeviceSettings::kI2cPinSda, DeviceSettings::kI2cPinScl);
+  Serial.println("[BOOT] PipSurvivor starting...");
+  Serial.println(DeviceSettings::kEnableRadio         ? "[BOOT] radio:       ON"  : "[BOOT] radio:       OFF");
+  Serial.println(DeviceSettings::kEnableGyroscope     ? "[BOOT] gyroscope:   ON"  : "[BOOT] gyroscope:   OFF");
+  Serial.println(DeviceSettings::kEnableBarometer     ? "[BOOT] barometer:   ON"  : "[BOOT] barometer:   OFF");
+  Serial.println(DeviceSettings::kEnableWaterSensor   ? "[BOOT] water:       ON"  : "[BOOT] water:       OFF");
+  Serial.println(DeviceSettings::kEnableButtons       ? "[BOOT] buttons:     ON"  : "[BOOT] buttons:     OFF");
+  Serial.println(DeviceSettings::kEnableDisplay       ? "[BOOT] display:     ON"  : "[BOOT] display:     OFF");
+
+  // I2C is only needed when at least one I2C sensor is enabled.
+  if (DeviceSettings::kEnableGyroscope || DeviceSettings::kEnableBarometer) {
+    Wire.begin(DeviceSettings::kI2cPinSda, DeviceSettings::kI2cPinScl);
+  }
+
+  // Initialize individual sensors guarded by their enable flags.
+  if (DeviceSettings::kEnableGyroscope)   { g_gyro.begin(); }
+  if (DeviceSettings::kEnableBarometer)   { g_bmp.begin(); }
+  if (DeviceSettings::kEnableWaterSensor) { g_water_sensor.begin(); }
 
 #if defined(PIPSURVIVOR_RADIO_ESPNOW)
-  g_radio_impl.begin();
+  if (DeviceSettings::kEnableRadio) g_radio_impl.begin();
 #elif defined(PIPSURVIVOR_RADIO_RYLR998)
-  Serial2.begin(115200, SERIAL_8N1, DeviceSettings::kRadioRxPin, DeviceSettings::kRadioTxPin);
+  if (DeviceSettings::kEnableRadio) {
+    Serial2.begin(115200, SERIAL_8N1, DeviceSettings::kRadioRxPin, DeviceSettings::kRadioTxPin);
+    g_radio_impl.begin();
+  }
 #endif
 
   MainDevice::setInstance(&g_device);

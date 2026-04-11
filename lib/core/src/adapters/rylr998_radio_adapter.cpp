@@ -1,4 +1,5 @@
 #include "rylr998_radio_adapter.h"
+#include "../settings.h"
 
 namespace {
 
@@ -16,9 +17,33 @@ Rylr998RadioAdapter::Rylr998RadioAdapter(
     : RadioPort(config),
       serial_(serial),
       destination_address_(destinationAddress),
-      line_length_(0) {
+      line_length_(0),
+      initialized_(false) {
   serial_.begin(baudRate);
   memset(line_buffer_, 0, sizeof(line_buffer_));
+}
+
+bool Rylr998RadioAdapter::begin() {
+  if (initialized_) {
+    return true;
+  }
+
+  serial_.println("AT+BAND=" + String(DeviceSettings::kRadioBand));
+  delay(50);
+  serial_.println("AT+NETWORKID=" + String(DeviceSettings::kRadioNetworkId));
+  delay(50);
+  serial_.println("AT+PARAMETER=" + String(DeviceSettings::kRadioSf) + "," +
+                  String(DeviceSettings::kRadioCr) + "," +
+                  String(DeviceSettings::kRadioBw) + "," +
+                  String(DeviceSettings::kRadioPreamble));
+  delay(50);
+  serial_.println("AT+ADDRESS=" + String(DeviceSettings::SENDER
+      ? DeviceSettings::kRadioAddressSender
+      : DeviceSettings::kRadioAddressReceiver));
+  delay(500);
+
+  initialized_ = true;
+  return true;
 }
 
 bool Rylr998RadioAdapter::sendMessage(const String& message, uint8_t hops) {
