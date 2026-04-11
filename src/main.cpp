@@ -113,6 +113,13 @@ class MainDevice {
     xSemaphoreGiveRecursive(feed_mutex_);
     return count;
   }
+
+  DisplayFrame getLastRenderedFrame() const {
+    xSemaphoreTakeRecursive((SemaphoreHandle_t)feed_mutex_, portMAX_DELAY);
+    DisplayFrame frame = last_rendered_frame_;
+    xSemaphoreGiveRecursive((SemaphoreHandle_t)feed_mutex_);
+    return frame;
+  }
   
   String getMessage(size_t index) const {
     xSemaphoreTakeRecursive(feed_mutex_, portMAX_DELAY);
@@ -528,13 +535,71 @@ class MainDevice {
   SemaphoreHandle_t radio_mutex_;
 };
 
+class WebButtonAdapter : public ButtonPanelPort {
+ public:
+  WebButtonAdapter() : head_(0), tail_(0) {
+    mutex_ = xSemaphoreCreateMutex();
+  }
+
+  bool begin() override { return true; }
+
+  bool readKey(KeyInput& key) override {
+    xSemaphoreTake(mutex_, portMAX_DELAY);
+    bool has_key = false;
+    if (head_ != tail_) {
+      key = queue_[head_];
+      head_ = (head_ + 1) % 16;
+      has_key = true;
+    }
+    xSemaphoreGive(mutex_);
+    return has_key;
+  }
+
+  void pushKey(KeyInput key) {
+    xSemaphoreTake(mutex_, portMAX_DELAY);
+    uint8_t next_tail = (tail_ + 1) % 16;
+    if (next_tail != head_) {
+      queue_[tail_] = key;
+      tail_ = next_tail;
+    }
+    xSemaphoreGive(mutex_);
+  }
+
+ private:
+  KeyInput queue_[16];
+  uint8_t head_;
+  uint8_t tail_;
+  SemaphoreHandle_t mutex_;
+};
+
+class CompositeButtonAdapter : public ButtonPanelPort {
+ public:
+  CompositeButtonAdapter(ButtonPanelPort& a, ButtonPanelPort& b) : a_(a), b_(b) {}
+  bool begin() override {
+    a_.begin();
+    b_.begin();
+    return true;
+  }
+  bool readKey(KeyInput& key) override {
+    if (a_.readKey(key)) return true;
+    if (b_.readKey(key)) return true;
+    return false;
+  }
+ private:
+  ButtonPanelPort& a_;
+  ButtonPanelPort& b_;
+};
+
 MainDevice* MainDevice::instance_ = nullptr;
 
 MockDisplayAdapter g_display(16, 2);
-MatrixButtonPanelAdapter g_buttons(
+MatrixButtonPanelAdapter g_physical_buttons(
   DeviceSettings::kButtonRows,
   DeviceSettings::kButtonCols,
   DeviceSettings::kButtonDebounceMs);
+
+WebButtonAdapter g_web_buttons;
+CompositeButtonAdapter g_buttons(g_physical_buttons, g_web_buttons);
 
 #if defined(PIPSURVIVOR_RADIO_ESPNOW)
 EspNowRadioAdapter g_radio_impl(DeviceSettings::buildRadioConfig(), 0);
@@ -574,13 +639,12 @@ MainDevice g_device(g_display, g_buttons, g_radio, g_alert_detection);
 WebServer g_web_server(80);
 
 void handleRoot() {
-  String html = R"(
+  String html = R"HTML(
 <!DOCTYPE html>
 <html lang="en">
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <meta http-equiv="refresh" content="5">
   <title>PipSurvivor Receiver</title>
   <style>
     :root {
@@ -609,6 +673,49 @@ void handleRoot() {
       margin-bottom: 2rem;
       letter-spacing: -0.05em;
     }
+    .send-header {
+      color: var(--text);
+      text-align: center;
+      margin-bottom: 1rem;
+      font-size: 1.5rem;
+    }
+    .keypad-container {
+      background: #3c3c3c;
+      padding: 15px;
+      border-radius: 12px;
+      border: 3px solid #555;
+      margin-bottom: 2rem;
+    }
+    .keypad {
+      display: grid;
+      grid-template-columns: repeat(4, 1fr);
+      gap: 12px;
+    }
+    .key {
+      aspect-ratio: 1;
+      border: 2px solid transparent;
+      border-radius: 8px;
+      color: white;
+      cursor: pointer;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      transition: filter 0.1s;
+      user-select: none;
+      padding: 0;
+    }
+    .key:active { filter: brightness(0.8) !important; }
+    .key.blue {
+      background: #6f8cf2;
+      border-color: #5a7add;
+    }
+    .key.red {
+      background: #d94a4a;
+      border-color: #c73939;
+    }
+    .key-main { font-size: 1.8rem; font-weight: 500; line-height: 1; margin-bottom: 4px; }
+    .key-sub { font-size: 0.7rem; opacity: 0.9; line-height: 1; min-height: 0.7rem; font-weight: normal; }
     .messages {
       display: flex;
       flex-direction: column;
@@ -635,18 +742,103 @@ void handleRoot() {
       margin-bottom: 0.5rem;
       text-transform: uppercase;
     }
+    .tx-badge {
+      display: inline-block;
+      background: rgba(167, 139, 250, 0.15);
+      color: #a78bfa;
+      padding: 0.2rem 0.6rem;
+      border-radius: 4px;
+      font-size: 0.8rem;
+      font-weight: 600;
+      margin-bottom: 0.5rem;
+      text-transform: uppercase;
+    }
+    .lcd-screen {
+      background: #8bac0f;
+      color: #0f380f;
+      font-family: 'Courier New', Courier, monospace;
+      padding: 12px;
+      border: 4px solid #111;
+      border-radius: 6px;
+      margin-bottom: 1rem;
+      font-size: 1.4rem;
+      line-height: 1.4;
+      white-space: pre;
+      text-align: left;
+      font-weight: bold;
+      text-shadow: 1px 1px 0px rgba(139, 172, 15, 0.4);
+      box-shadow: inset 0 0 10px rgba(0,0,0,0.5);
+    }
+    .alr-badge {
+      display: inline-block;
+      background: rgba(248, 113, 113, 0.15);
+      color: #f87171;
+      padding: 0.2rem 0.6rem;
+      border-radius: 4px;
+      font-size: 0.8rem;
+      font-weight: 600;
+      margin-bottom: 0.5rem;
+      text-transform: uppercase;
+    }
     @keyframes fadeIn {
       from { opacity: 0; transform: translateY(10px); }
       to { opacity: 1; transform: translateY(0); }
     }
     .empty { text-align: center; color: #94a3b8; padding: 2rem; }
   </style>
+  <script>
+    function pk(k) {
+      fetch('/key?k=' + k).catch(e => console.error(e));
+    }
+    async function updateFeed() {
+      try {
+        const r = await fetch('/feed');
+        const t = await r.text();
+        document.getElementById('msg-list').innerHTML = t;
+      } catch(e) {}
+    }
+    async function updateLcd() {
+      try {
+        const r = await fetch('/lcd');
+        const t = await r.text();
+        document.getElementById('lcd-screen').innerHTML = t;
+      } catch(e) {}
+    }
+    setInterval(updateFeed, 3000);
+    setInterval(updateLcd, 500);
+  </script>
 </head>
 <body>
   <div class="container">
+    <h1 class="send-header">Send Message</h1>
+    <div class="keypad-container">
+      <div id="lcd-screen" class="lcd-screen">Loading...</div>
+      <div class="keypad">
+        <button class="key blue" onclick="pk('K1')"><div class="key-main">1</div><div class="key-sub">.,!?</div></button>
+        <button class="key blue" onclick="pk('K2')"><div class="key-main">2</div><div class="key-sub">ABC</div></button>
+        <button class="key blue" onclick="pk('K3')"><div class="key-main">3</div><div class="key-sub">DEF</div></button>
+        <button class="key red" onclick="pk('A')"><div class="key-main">A</div><div class="key-sub"></div></button>
+
+        <button class="key blue" onclick="pk('K4')"><div class="key-main">4</div><div class="key-sub">GHI</div></button>
+        <button class="key blue" onclick="pk('K5')"><div class="key-main">5</div><div class="key-sub">JKL</div></button>
+        <button class="key blue" onclick="pk('K6')"><div class="key-main">6</div><div class="key-sub">MNO</div></button>
+        <button class="key red" onclick="pk('B')"><div class="key-main">B</div><div class="key-sub"></div></button>
+
+        <button class="key blue" onclick="pk('K7')"><div class="key-main">7</div><div class="key-sub">PQRS</div></button>
+        <button class="key blue" onclick="pk('K8')"><div class="key-main">8</div><div class="key-sub">TUV</div></button>
+        <button class="key blue" onclick="pk('K9')"><div class="key-main">9</div><div class="key-sub">WXYZ</div></button>
+        <button class="key red" onclick="pk('C')"><div class="key-main">C</div><div class="key-sub"></div></button>
+
+        <button class="key red" onclick="pk('Star')"><div class="key-main">*</div><div class="key-sub"></div></button>
+        <button class="key blue" onclick="pk('K0')"><div class="key-main">0</div><div class="key-sub">[space]</div></button>
+        <button class="key red" onclick="pk('Hash')"><div class="key-main">#</div><div class="key-sub"></div></button>
+        <button class="key red" onclick="pk('D')"><div class="key-main">D</div><div class="key-sub"></div></button>
+      </div>
+    </div>
+    
     <h1>Receiving Feed</h1>
-    <div class="messages">
-)";
+    <div id="msg-list" class="messages">
+)HTML";
 
   if (g_device.getMessageCount() == 0) {
     html += "<div class='empty'>No messages received yet.</div>";
@@ -688,13 +880,89 @@ void backgroundReceiverTask(void* parameter) {
   }
 }
 
+void handleKeyInput() {
+  if (g_web_server.hasArg("k")) {
+    String k = g_web_server.arg("k");
+    KeyInput key = KeyInput::None;
+    if (k == "K1") key = KeyInput::K1;
+    else if (k == "K2") key = KeyInput::K2;
+    else if (k == "K3") key = KeyInput::K3;
+    else if (k == "K4") key = KeyInput::K4;
+    else if (k == "K5") key = KeyInput::K5;
+    else if (k == "K6") key = KeyInput::K6;
+    else if (k == "K7") key = KeyInput::K7;
+    else if (k == "K8") key = KeyInput::K8;
+    else if (k == "K9") key = KeyInput::K9;
+    else if (k == "K0") key = KeyInput::K0;
+    else if (k == "A") key = KeyInput::A;
+    else if (k == "B") key = KeyInput::B;
+    else if (k == "C") key = KeyInput::C;
+    else if (k == "D") key = KeyInput::D;
+    else if (k == "Star") key = KeyInput::Star;
+    else if (k == "Hash") key = KeyInput::Hash;
+    
+    if (key != KeyInput::None) {
+      g_web_buttons.pushKey(key);
+    }
+  }
+  g_web_server.send(200, "text/plain", "OK");
+}
+
+void handleFeed() {
+  String partial = "";
+  if (g_device.getMessageCount() == 0) {
+    partial = "<div class='empty'>No messages received yet.</div>";
+  } else {
+    size_t count = g_device.getMessageCount();
+    size_t start_idx = count >= 5 ? count - 5 : 0;
+    for (int i = count - 1; i >= static_cast<int>(start_idx); --i) {
+      String msg = g_device.getMessage(i);
+      String badge = "System";
+      String badgeClass = "rx-badge";
+      if (msg.startsWith("RX:")) {
+        msg = msg.substring(3);
+        badge = "Inbound";
+      } else if (msg.startsWith("TX:")) {
+        msg = msg.substring(3);
+        badge = "Outbound";
+        badgeClass = "tx-badge";
+      } else if (msg.startsWith("ALR[")) {
+        badge = "Alert";
+        badgeClass = "alr-badge";
+      }
+      partial += "<div class='message'><div class='" + badgeClass + "'>" + badge + "</div>" + msg + "</div>";
+    }
+  }
+  g_web_server.send(200, "text/html", partial);
+}
+
+void handleLcd() {
+  DisplayFrame frame = g_device.getLastRenderedFrame();
+  String html = frame.line1;
+  html.replace(" ", "&nbsp;");
+  html += "<br>";
+  String l2 = frame.line2;
+  l2.replace(" ", "&nbsp;");
+  html += l2;
+  g_web_server.send(200, "text/html", html);
+}
+
 void initWebServer() {
   if (!DeviceSettings::kEnableWebServer) return;
 
-  Serial.println("[WIFI] Starting AP...");
-  WiFi.softAP(DeviceSettings::kApSsid, DeviceSettings::kApPassword);
+  uint8_t mac[6];
+  WiFi.macAddress(mac);
+  char ssidBuffer[32];
+  snprintf(ssidBuffer, sizeof(ssidBuffer), "%s-%02X%02X", DeviceSettings::kApSsid, mac[4], mac[5]);
+
+  Serial.print("[WIFI] Starting AP: ");
+  Serial.println(ssidBuffer);
+  WiFi.softAP(ssidBuffer, DeviceSettings::kApPassword);
   
   g_web_server.on("/", handleRoot);
+  g_web_server.on("/key", handleKeyInput);
+  g_web_server.on("/feed", handleFeed);
+  g_web_server.on("/lcd", handleLcd);
   g_web_server.begin();
   Serial.print("[WIFI] AP started. Root IP: ");
   Serial.println(WiFi.softAPIP());

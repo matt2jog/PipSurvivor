@@ -21,7 +21,6 @@ Rylr998RadioAdapter::Rylr998RadioAdapter(
       my_uid_(0),
       msg_seq_(0),
       cache_index_(0) {
-  serial_.begin(baudRate);
   memset(line_buffer_, 0, sizeof(line_buffer_));
   
   for (size_t i = 0; i < DeviceSettings::kMeshCacheSize; ++i) {
@@ -30,7 +29,6 @@ Rylr998RadioAdapter::Rylr998RadioAdapter(
   for (size_t i = 0; i < 5; ++i) {
     relay_jobs_[i].active = false;
   }
-  setupUid();
 }
 
 void Rylr998RadioAdapter::setupUid() {
@@ -62,6 +60,9 @@ bool Rylr998RadioAdapter::begin() {
   if (initialized_) {
     return true;
   }
+  
+  setupUid();
+  serial_.begin(115200); // Ensure serial is ready here if not already
 
   serial_.println("AT+BAND=" + String(DeviceSettings::kRadioBand));
   delay(50);
