@@ -9,9 +9,6 @@
 
 namespace DeviceSettings {
 
-// Role: set via build flag -DDEVICE_IS_SENDER=1 or 0
-static constexpr bool SENDER = DEVICE_IS_SENDER;
-
 // ============================================================
 // Component enable flags.
 // Set to true only when the hardware is physically connected.
@@ -37,8 +34,8 @@ static constexpr bool kEnableButtons = true;
 static constexpr bool kEnableDisplay = false;
 
 // Web server / hotspot output (typically used on receiver).
-static constexpr bool kEnableWebServer = !SENDER;
-static constexpr char kApSsid[] = "PipSurvivor-Receiver";
+static constexpr bool kEnableWebServer = true;
+static constexpr char kApSsid[] = "PipSurvivor-Node";
 static constexpr char kApPassword[] = "survivor123!";
 
 // Alert detection subsystem (jerk + altitude + submersion).
@@ -52,8 +49,7 @@ static constexpr uint8_t kRadioSf = 9;
 static constexpr uint8_t kRadioCr = 7;
 static constexpr uint8_t kRadioBw = 1;
 static constexpr uint8_t kRadioPreamble = 12;
-static constexpr uint16_t kRadioAddressSender = 1;
-static constexpr uint16_t kRadioAddressReceiver = 2; // For directed non-mesh mode if needed
+static constexpr uint16_t kRadioNodeAddress = 1; // Generic hardware address for all nodes
 static constexpr uint32_t kPingIntervalMs = 2000;
 
 // Mesh routing constants

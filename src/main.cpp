@@ -94,7 +94,10 @@ class MainDevice {
         pending_char_pos_(-1),
         pending_updated_ms_(0),
         render_dirty_(true),
-        last_rendered_frame_(DisplayFrame{"", ""}) {}
+        last_rendered_frame_(DisplayFrame{"", ""}) {
+    feed_mutex_ = xSemaphoreCreateRecursiveMutex();
+    radio_mutex_ = xSemaphoreCreateMutex();
+  }
 
   static void setInstance(MainDevice* instance) {
     instance_ = instance;
@@ -104,11 +107,19 @@ class MainDevice {
     return instance_;
   }
 
-  size_t getMessageCount() const { return message_count_; }
+  size_t getMessageCount() const {
+    xSemaphoreTakeRecursive(feed_mutex_, portMAX_DELAY);
+    size_t count = message_count_;
+    xSemaphoreGiveRecursive(feed_mutex_);
+    return count;
+  }
   
   String getMessage(size_t index) const {
-    if (index >= message_count_) return "";
-    return message_feed_[index];
+    xSemaphoreTakeRecursive(feed_mutex_, portMAX_DELAY);
+    String msg = "";
+    if (index < message_count_) msg = message_feed_[index];
+    xSemaphoreGiveRecursive(feed_mutex_);
+    return msg;
   }
 
   bool begin() {
@@ -134,10 +145,6 @@ class MainDevice {
   }
 
   void loop() {
-    if (DeviceSettings::kEnableRadio) {
-      radio_.poll();
-    }
-
     if (DeviceSettings::kEnableAlertDetection) {
       const uint32_t now = millis();
       if ((now - last_alert_poll_ms_) >= DeviceSettings::kAlertPollMs) {
@@ -150,6 +157,7 @@ class MainDevice {
 
 
 
+    xSemaphoreTakeRecursive(feed_mutex_, portMAX_DELAY);
     processQueuedAlerts();
 
     const uint32_t now = millis();
@@ -170,6 +178,7 @@ class MainDevice {
       last_display_render_ms_ = now;
       render_dirty_ = false;
     }
+    xSemaphoreGiveRecursive(feed_mutex_);
   }
 
  private:
@@ -232,7 +241,12 @@ class MainDevice {
     alert_queue_count_--;
 
     addFeedMessage(alert);
-    if (!radio_.sendAlert(alert, 1)) {
+    
+    xSemaphoreTake(radio_mutex_, portMAX_DELAY);
+    bool ok = radio_.sendAlert(alert, 1);
+    xSemaphoreGive(radio_mutex_);
+    
+    if (!ok) {
       enterError("alert send fail");
     }
   }
@@ -254,6 +268,7 @@ class MainDevice {
   }
 
   void addFeedMessage(const String& message) {
+    xSemaphoreTakeRecursive(feed_mutex_, portMAX_DELAY);
     if (message_count_ < DeviceSettings::kMaxFeedMessages) {
       message_feed_[message_count_] = message;
       message_count_++;
@@ -268,6 +283,7 @@ class MainDevice {
       selected_message_index_ = message_count_ - 1;
       selected_text_offset_ = 0;
     }
+    xSemaphoreGiveRecursive(feed_mutex_);
   }
 
   void maybeCommitPendingMultiTap(uint32_t nowMs) {
@@ -354,7 +370,11 @@ class MainDevice {
         return;
       }
 
-      if (!radio_.sendMessage(compose_draft_, 1)) {
+      xSemaphoreTake(radio_mutex_, portMAX_DELAY);
+      bool ok = radio_.sendMessage(compose_draft_, 1);
+      xSemaphoreGive(radio_mutex_);
+
+      if (!ok) {
         enterError("msg send fail");
         return;
       }
@@ -502,6 +522,10 @@ class MainDevice {
   uint16_t ping_count_;
   bool render_dirty_;
   DisplayFrame last_rendered_frame_;
+
+ public:
+  SemaphoreHandle_t feed_mutex_;
+  SemaphoreHandle_t radio_mutex_;
 };
 
 MainDevice* MainDevice::instance_ = nullptr;
@@ -515,10 +539,7 @@ MatrixButtonPanelAdapter g_buttons(
 #if defined(PIPSURVIVOR_RADIO_ESPNOW)
 EspNowRadioAdapter g_radio_impl(DeviceSettings::buildRadioConfig(), 0);
 #elif defined(PIPSURVIVOR_RADIO_RYLR998)
-static constexpr uint16_t kRylrDest = DeviceSettings::SENDER
-    ? DeviceSettings::kRadioAddressReceiver
-    : DeviceSettings::kRadioAddressSender;
-Rylr998RadioAdapter g_radio_impl(DeviceSettings::buildRadioConfig(), Serial2, kRylrDest, 115200);
+Rylr998RadioAdapter g_radio_impl(DeviceSettings::buildRadioConfig(), Serial2, DeviceSettings::kMeshBroadcastAddress, 115200);
 #else
 MockRadioAdapter g_radio_impl(DeviceSettings::buildRadioConfig());
 #endif
@@ -652,6 +673,21 @@ void handleRoot() {
   g_web_server.send(200, "text/html", html);
 }
 
+void backgroundReceiverTask(void* parameter) {
+  for (;;) {
+    if (DeviceSettings::kEnableRadio && MainDevice::instance() != nullptr) {
+      xSemaphoreTake(MainDevice::instance()->radio_mutex_, portMAX_DELAY);
+      g_radio.poll();
+      xSemaphoreGive(MainDevice::instance()->radio_mutex_);
+    }
+
+    if (DeviceSettings::kEnableWebServer) {
+      g_web_server.handleClient();
+    }
+    vTaskDelay(pdMS_TO_TICKS(10));
+  }
+}
+
 void initWebServer() {
   if (!DeviceSettings::kEnableWebServer) return;
 
@@ -705,12 +741,17 @@ void setup() {
   Serial.println(ok ? "OK" : "PARTIAL/FAIL");
 
   initWebServer();
+
+  xTaskCreatePinnedToCore(
+      backgroundReceiverTask,
+      "BgReceiver",
+      8192,
+      NULL,
+      1,
+      NULL,
+      0); // Run on Core 0
 }
 
 void loop() {
   g_device.loop();
-  
-  if (DeviceSettings::kEnableWebServer) {
-    g_web_server.handleClient();
-  }
 }

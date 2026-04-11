@@ -72,9 +72,7 @@ bool Rylr998RadioAdapter::begin() {
                   String(DeviceSettings::kRadioBw) + "," +
                   String(DeviceSettings::kRadioPreamble));
   delay(50);
-  serial_.println("AT+ADDRESS=" + String(DeviceSettings::SENDER
-      ? DeviceSettings::kRadioAddressSender
-      : DeviceSettings::kRadioAddressReceiver));
+  serial_.println("AT+ADDRESS=" + String(DeviceSettings::kRadioNodeAddress));
   delay(500);
 
   initialized_ = true;
