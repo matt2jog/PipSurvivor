@@ -54,6 +54,7 @@ class Rylr998RadioAdapter : public RadioPort {
   
   uint32_t my_uid_;
   uint32_t msg_seq_;
+  volatile uint32_t acked_msg_id_;
 
   MessageCacheItem cache_[50]; // Hardcoding to 50 for simplicity or use kMeshCacheSize
   size_t cache_index_;
@@ -74,6 +75,7 @@ class Rylr998RadioAdapter : public RadioPort {
   void cancelRelayIfMatches(uint32_t sender_uid, uint32_t msg_id);
   
   void sendDirectedAck(uint32_t dest_uid, uint32_t msg_id);
+  bool sendWithAck(const String& type, uint32_t msg_id, uint8_t hops, const String& payload);
   bool sendRawMeshMessage(const String& type, uint32_t sender_uid, uint32_t dest_uid, uint32_t msg_id, uint8_t ttl, const String& payload);
 };
 

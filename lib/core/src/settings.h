@@ -65,10 +65,10 @@ static constexpr uint8_t kMeshMaxHops = 7;
 static constexpr size_t kMeshCacheSize = 50;
 static constexpr uint32_t kMeshJitterMinMs = 100;
 static constexpr uint32_t kMeshJitterMaxMs = 500;
-static constexpr uint32_t kMeshAckTimeoutMs = 2000;
-  static constexpr uint8_t kMeshMaxRetries = 3;
-  static constexpr uint16_t kMeshBroadcastAddress = 0; // RYLR998 broadcast
-  static constexpr size_t kMeshHistorySize = 20;
+static constexpr uint32_t kMeshAckMaxRetryTimerMs = 2000;
+static constexpr uint32_t kMeshAckRetryMs = 250;
+static constexpr uint16_t kMeshBroadcastAddress = 0; // RYLR998 broadcast
+static constexpr size_t kMeshHistorySize = 20;
 
 
 // Number of message entries retained in the on-device inbox/feed.
@@ -109,10 +109,6 @@ static constexpr uint16_t kWaterSensorWetRaw = 1023;
 static constexpr bool kWaterSensorDigitalWetHigh = true;
 static constexpr uint16_t kWaterSensorWetThresholdRaw = 120;
 static constexpr uint16_t kWaterSensorSettleDelayMs = 12;
-
-// ESP-NOW Mesh constants
-static constexpr uint8_t kEspNowMaxRetries = 5;
-static constexpr uint32_t kEspNowRetryDelayMs = 250;
 
 // Radio hardware pins (e.g. RYLR998).
 static constexpr int8_t kRadioRxPin = 16;

@@ -20,6 +20,7 @@ Rylr998RadioAdapter::Rylr998RadioAdapter(
       initialized_(false),
       my_uid_(0),
       msg_seq_(0),
+      acked_msg_id_(0),
       cache_index_(0),
       history_count_(0),
       history_head_(0),
@@ -170,13 +171,38 @@ bool Rylr998RadioAdapter::begin() {
 bool Rylr998RadioAdapter::sendMessage(const String& message, uint8_t hops, uint32_t msg_id) {
   if (msg_id == 0) msg_id = ++msg_seq_;
   markMessageSeen(my_uid_, msg_id);
-  return sendRawMeshMessage("M", my_uid_, 0xFFFFFFFF, msg_id, hops, message);
+  return sendWithAck("M", msg_id, hops, message);
 }
 
 bool Rylr998RadioAdapter::sendAlert(const String& alert, uint8_t hops, uint32_t msg_id) {
   if (msg_id == 0) msg_id = ++msg_seq_;
   markMessageSeen(my_uid_, msg_id);
-  return sendRawMeshMessage("A", my_uid_, 0xFFFFFFFF, msg_id, hops, alert);
+  return sendWithAck("A", msg_id, hops, alert);
+}
+
+bool Rylr998RadioAdapter::sendWithAck(const String& type, uint32_t msg_id, uint8_t hops, const String& payload) {
+  acked_msg_id_ = 0;
+  const uint32_t retry_ms = DeviceSettings::kMeshAckRetryMs;
+  const uint32_t max_retry_timer_ms = DeviceSettings::kMeshAckMaxRetryTimerMs;
+  const uint32_t window_start = millis();
+
+  while ((millis() - window_start) < max_retry_timer_ms) {
+    if (!sendRawMeshMessage(type, my_uid_, 0xFFFFFFFF, msg_id, hops, payload)) {
+      delay(10);
+      continue;
+    }
+
+    const uint32_t wait_start = millis();
+    while ((millis() - wait_start) < retry_ms && (millis() - window_start) < max_retry_timer_ms) {
+      poll();
+      if (acked_msg_id_ == msg_id) {
+        return true;
+      }
+      delay(10);
+    }
+  }
+
+  return false;
 }
 
 bool Rylr998RadioAdapter::sendRawMeshMessage(const String& type, uint32_t sender_uid, uint32_t dest_uid, uint32_t msg_id, uint8_t ttl, const String& payload) {
@@ -248,8 +274,7 @@ void Rylr998RadioAdapter::processRelayJobs() {
 }
 
 void Rylr998RadioAdapter::sendDirectedAck(uint32_t dest_uid, uint32_t msg_id) {
-  // Not fully implemented for ARQ yet, but this is how we'd reply
-  // sendRawMeshMessage("K", my_uid_, dest_uid, msg_id, DeviceSettings::kMeshMaxHops, "");
+  sendRawMeshMessage("K", my_uid_, dest_uid, msg_id, DeviceSettings::kMeshMaxHops, "");
 }
 
 void Rylr998RadioAdapter::poll() {
@@ -329,6 +354,14 @@ void Rylr998RadioAdapter::handleLine(const String& line) {
     return;
   }
 
+  if (type_str == "K") {
+    if (dest_uid == my_uid_) {
+      acked_msg_id_ = msg_id;
+      Serial.printf("[MESH] ACK from=%08X msg=%lu\n", sender_uid, (unsigned long)msg_id);
+    }
+    return;
+  }
+
   // Implicit ACK / Collision avoidance: If we hear someone else relaying this exact msg, cancel our pending relay
   cancelRelayIfMatches(sender_uid, msg_id);
 
@@ -361,7 +394,7 @@ void Rylr998RadioAdapter::handleLine(const String& line) {
   }
 
   // ARQ end-to-end ACK explicit reply
-  if (dest_uid == my_uid_ && type_str != "K") {
+  if (type_str != "K") {
     sendDirectedAck(sender_uid, msg_id);
   }
 }
