@@ -21,6 +21,8 @@ class Rylr998RadioAdapter : public RadioPort {
   bool sendMessage(const String& message, uint8_t hops, uint32_t msg_id = 0) override;
   bool sendAlert(const String& alert, uint8_t hops, uint32_t msg_id = 0) override;
   void poll() override;
+  void acknowledgeMessage(uint32_t msg_id) override;
+  void setSendWaitCallback(RadioSendWaitCallback callback) override;
 
   uint32_t getDeviceUid() const override;
   void getRecentMessages(MeshMessageEntry* out, size_t max, size_t& count) override;
@@ -55,6 +57,7 @@ class Rylr998RadioAdapter : public RadioPort {
   uint32_t my_uid_;
   uint32_t msg_seq_;
   volatile uint32_t acked_msg_id_;
+  RadioSendWaitCallback send_wait_callback_;
 
   MessageCacheItem cache_[50]; // Hardcoding to 50 for simplicity or use kMeshCacheSize
   size_t cache_index_;

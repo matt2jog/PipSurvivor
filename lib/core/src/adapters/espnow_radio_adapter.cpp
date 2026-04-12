@@ -1,6 +1,7 @@
 #include "espnow_radio_adapter.h"
 
 #include "../settings.h"
+#include <stdlib.h>
 
 EspNowRadioAdapter* EspNowRadioAdapter::active_instance_ = nullptr;
 
@@ -8,6 +9,15 @@ namespace {
 
 String buildWirePayload(char type, uint32_t msg_id, uint8_t hops, const String& message) {
   return String(type) + "|" + String(msg_id) + "|" + String(hops) + "|" + message;
+}
+
+uint32_t parseUInt32Token(const String& token) {
+  char* end = nullptr;
+  unsigned long value = strtoul(token.c_str(), &end, 10);
+  if (end == token.c_str()) {
+    return 0;
+  }
+  return static_cast<uint32_t>(value);
 }
 
 }  // namespace
@@ -19,6 +29,7 @@ EspNowRadioAdapter::EspNowRadioAdapter(const RadioConfig& config, uint8_t channe
       broadcast_peer_{0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF},
       incoming_count_(0),
       acked_msg_id_(0),
+      send_wait_callback_(nullptr),
       cache_index_(0) {
   memset(cache_, 0, sizeof(cache_));
   for (size_t i = 0; i < 5; ++i) relay_jobs_[i].active = false;
@@ -104,18 +115,34 @@ bool EspNowRadioAdapter::sendWirePayload(char type, const String& payload, uint8
     if (send_result == ESP_OK) {
       const uint32_t wait_start = millis();
       while ((millis() - wait_start) < retry_ms && (millis() - window_start) < max_retry_timer_ms) {
+        if (send_wait_callback_ != nullptr) {
+          send_wait_callback_();
+        }
         if (acked_msg_id_ == msg_id) {
           return true;
         }
         delay(10);
       }
     } else {
+      if (send_wait_callback_ != nullptr) {
+        send_wait_callback_();
+      }
       delay(10);
     }
   }
 
   return false;
 #endif
+}
+
+void EspNowRadioAdapter::acknowledgeMessage(uint32_t msg_id) {
+  if (msg_id != 0) {
+    acked_msg_id_ = msg_id;
+  }
+}
+
+void EspNowRadioAdapter::setSendWaitCallback(RadioSendWaitCallback callback) {
+  send_wait_callback_ = callback;
 }
 
 void EspNowRadioAdapter::poll() {
@@ -207,7 +234,21 @@ uint32_t EspNowRadioAdapter::parseMsgIdFromWirePayload(const String& wirePayload
   if (secondPipe < 0) {
     return 0;
   }
-  return static_cast<uint32_t>(wirePayload.substring(firstPipe + 1, secondPipe).toInt());
+
+  // Support both ACK formats:
+  // ESP-NOW: K|<msg_id>|<hops>|<payload>
+  // RYLR998: K|<sender_hex>|<dest_hex>|<msg_id>|<ttl>|<payload>
+  if (wirePayload[0] == 'K') {
+    const int thirdPipe = wirePayload.indexOf('|', secondPipe + 1);
+    if (thirdPipe > 0) {
+      const int fourthPipe = wirePayload.indexOf('|', thirdPipe + 1);
+      if (fourthPipe > 0) {
+        return parseUInt32Token(wirePayload.substring(thirdPipe + 1, fourthPipe));
+      }
+    }
+  }
+
+  return parseUInt32Token(wirePayload.substring(firstPipe + 1, secondPipe));
 }
 
 uint8_t EspNowRadioAdapter::parseHopsFromWirePayload(const String& wirePayload) const {
@@ -265,7 +306,10 @@ void EspNowRadioAdapter::onReceive(const uint8_t* data, int len) {
   if (type == 'K') {
     // ACK message received
     uint32_t ack_id = parseMsgIdFromWirePayload(rawPayload);
-    acked_msg_id_ = ack_id;
+    if (ack_id != 0) {
+      acked_msg_id_ = ack_id;
+      notifyAckReceived(ack_id);
+    }
     return;
   }
 

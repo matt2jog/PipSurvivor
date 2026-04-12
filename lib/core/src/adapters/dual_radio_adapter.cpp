@@ -20,6 +20,10 @@ bool DualRadioAdapter::begin() {
 
   primary_.setReceiveCallback(onPrimaryMessageStatic);
   secondary_.setReceiveCallback(onSecondaryMessageStatic);
+  primary_.setAckCallback(onPrimaryAckStatic);
+  secondary_.setAckCallback(onSecondaryAckStatic);
+  primary_.setSendWaitCallback(onPrimaryWaitStatic);
+  secondary_.setSendWaitCallback(onSecondaryWaitStatic);
 
   bool primary_ok = primary_.begin();
   bool secondary_ok = secondary_.begin();
@@ -101,6 +105,43 @@ void DualRadioAdapter::onPrimaryMessageStatic(const String& message, uint8_t hop
 void DualRadioAdapter::onSecondaryMessageStatic(const String& message, uint8_t hops, uint32_t msg_id) {
   if (active_instance_ != nullptr) {
     active_instance_->enqueueIncomingWithSource(&active_instance_->secondary_, message, hops, msg_id);
+  }
+}
+
+void DualRadioAdapter::onPrimaryAckStatic(uint32_t msg_id) {
+  if (active_instance_ != nullptr) {
+    active_instance_->onAckFrom(&active_instance_->primary_, msg_id);
+  }
+}
+
+void DualRadioAdapter::onSecondaryAckStatic(uint32_t msg_id) {
+  if (active_instance_ != nullptr) {
+    active_instance_->onAckFrom(&active_instance_->secondary_, msg_id);
+  }
+}
+
+void DualRadioAdapter::onPrimaryWaitStatic() {
+  if (active_instance_ != nullptr) {
+    active_instance_->secondary_.poll();
+  }
+}
+
+void DualRadioAdapter::onSecondaryWaitStatic() {
+  if (active_instance_ != nullptr) {
+    active_instance_->primary_.poll();
+  }
+}
+
+void DualRadioAdapter::onAckFrom(RadioPort* source, uint32_t msg_id) {
+  if (source == nullptr || msg_id == 0) {
+    return;
+  }
+
+  source->acknowledgeMessage(msg_id);
+  if (source == &primary_) {
+    secondary_.acknowledgeMessage(msg_id);
+  } else if (source == &secondary_) {
+    primary_.acknowledgeMessage(msg_id);
   }
 }
 

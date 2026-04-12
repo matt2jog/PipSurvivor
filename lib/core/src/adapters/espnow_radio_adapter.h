@@ -20,6 +20,8 @@ class EspNowRadioAdapter : public RadioPort {
   bool sendMessage(const String& message, uint8_t hops, uint32_t msg_id = 0) override;
   bool sendAlert(const String& alert, uint8_t hops, uint32_t msg_id = 0) override;
   void poll() override;
+  void acknowledgeMessage(uint32_t msg_id) override;
+  void setSendWaitCallback(RadioSendWaitCallback callback) override;
 
  private:
   bool enqueueIncoming(const String& rawPayload, uint8_t hops);
@@ -66,6 +68,7 @@ class EspNowRadioAdapter : public RadioPort {
   volatile size_t incoming_count_;
 
   volatile uint32_t acked_msg_id_;
+  RadioSendWaitCallback send_wait_callback_;
 
   MessageCacheItem cache_[32];
   size_t cache_index_;

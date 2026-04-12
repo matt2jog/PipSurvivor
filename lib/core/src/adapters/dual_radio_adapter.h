@@ -54,6 +54,11 @@ class DualRadioAdapter : public RadioPort {
 
   static void onPrimaryMessageStatic(const String& message, uint8_t hops, uint32_t msg_id);
   static void onSecondaryMessageStatic(const String& message, uint8_t hops, uint32_t msg_id);
+  static void onPrimaryAckStatic(uint32_t msg_id);
+  static void onSecondaryAckStatic(uint32_t msg_id);
+  static void onPrimaryWaitStatic();
+  static void onSecondaryWaitStatic();
+  void onAckFrom(RadioPort* source, uint32_t msg_id);
   static DualRadioAdapter* active_instance_;
 
   RadioPort& primary_;

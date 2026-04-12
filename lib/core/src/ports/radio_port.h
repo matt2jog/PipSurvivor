@@ -9,6 +9,8 @@ struct RadioConfig {
 };
 
 typedef void (*RadioReceiveCallback)(const String& message, uint8_t hops, uint32_t msg_id);
+typedef void (*RadioAckCallback)(uint32_t msg_id);
+typedef void (*RadioSendWaitCallback)();
 
 struct MeshMessageEntry {
   uint32_t sender_uid;
@@ -33,6 +35,10 @@ class RadioPort {
   virtual void poll() = 0;
 
   void setReceiveCallback(RadioReceiveCallback callback);
+  void setAckCallback(RadioAckCallback callback);
+
+  virtual void acknowledgeMessage(uint32_t msg_id) { (void)msg_id; }
+  virtual void setSendWaitCallback(RadioSendWaitCallback callback) { (void)callback; }
 
   virtual uint32_t getDeviceUid() const { return 0; }
   virtual void getRecentMessages(MeshMessageEntry* out, size_t max, size_t& count) { count = 0; }
@@ -42,11 +48,13 @@ class RadioPort {
 
  protected:
   void notifyMessageReceived(const String& message, uint8_t hops, uint32_t msg_id = 0) const;
+  void notifyAckReceived(uint32_t msg_id) const;
 
   RadioConfig config_;
 
  private:
   RadioReceiveCallback receive_callback_;
+  RadioAckCallback ack_callback_;
 };
 
 #endif

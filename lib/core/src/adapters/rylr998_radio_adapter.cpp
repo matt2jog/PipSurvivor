@@ -21,6 +21,7 @@ Rylr998RadioAdapter::Rylr998RadioAdapter(
       my_uid_(0),
       msg_seq_(0),
       acked_msg_id_(0),
+      send_wait_callback_(nullptr),
       cache_index_(0),
       history_count_(0),
       history_head_(0),
@@ -195,6 +196,9 @@ bool Rylr998RadioAdapter::sendWithAck(const String& type, uint32_t msg_id, uint8
     const uint32_t wait_start = millis();
     while ((millis() - wait_start) < retry_ms && (millis() - window_start) < max_retry_timer_ms) {
       poll();
+      if (send_wait_callback_ != nullptr) {
+        send_wait_callback_();
+      }
       if (acked_msg_id_ == msg_id) {
         return true;
       }
@@ -203,6 +207,16 @@ bool Rylr998RadioAdapter::sendWithAck(const String& type, uint32_t msg_id, uint8
   }
 
   return false;
+}
+
+void Rylr998RadioAdapter::acknowledgeMessage(uint32_t msg_id) {
+  if (msg_id != 0) {
+    acked_msg_id_ = msg_id;
+  }
+}
+
+void Rylr998RadioAdapter::setSendWaitCallback(RadioSendWaitCallback callback) {
+  send_wait_callback_ = callback;
 }
 
 bool Rylr998RadioAdapter::sendRawMeshMessage(const String& type, uint32_t sender_uid, uint32_t dest_uid, uint32_t msg_id, uint8_t ttl, const String& payload) {
@@ -345,7 +359,7 @@ void Rylr998RadioAdapter::handleLine(const String& line) {
   String type_str = wirePayload.substring(0, p1);
   uint32_t sender_uid = strtoul(wirePayload.substring(p1 + 1, p2).c_str(), NULL, 16);
   uint32_t dest_uid = strtoul(wirePayload.substring(p2 + 1, p3).c_str(), NULL, 16);
-  uint32_t msg_id = wirePayload.substring(p3 + 1, p4).toInt();
+  uint32_t msg_id = strtoul(wirePayload.substring(p3 + 1, p4).c_str(), NULL, 10);
   uint8_t ttl = wirePayload.substring(p4 + 1, p5).toInt();
   String payload = wirePayload.substring(p5 + 1);
 
@@ -357,6 +371,7 @@ void Rylr998RadioAdapter::handleLine(const String& line) {
   if (type_str == "K") {
     if (dest_uid == my_uid_) {
       acked_msg_id_ = msg_id;
+      notifyAckReceived(msg_id);
       Serial.printf("[MESH] ACK from=%08X msg=%lu\n", sender_uid, (unsigned long)msg_id);
     }
     return;
