@@ -78,16 +78,32 @@ TransitionResult transitionState(
       if (input == KeyInput::A) {
         return TransitionResult{DisplayState::Initial, true};
       }
-      if (input == KeyInput::B) {
+      if (input == KeyInput::K1) {
         return TransitionResult{DisplayState::Compose, true};
       }
+      if (input == KeyInput::K2) {
+        return TransitionResult{DisplayState::ViewAlerts, true};
+      }
+      if (input == KeyInput::K3) {
+        return TransitionResult{DisplayState::Initial, true};
+      }
       return TransitionResult{DisplayState::Menu, false};
+
+    case DisplayState::ViewAlerts:
+      if (input == KeyInput::A) {
+        return TransitionResult{DisplayState::Menu, true};
+      }
+      if (input == KeyInput::Star || input == KeyInput::Hash ||
+          input == KeyInput::B || input == KeyInput::C) {
+        return TransitionResult{DisplayState::ViewAlerts, false};
+      }
+      return TransitionResult{DisplayState::ViewAlerts, false};
 
     case DisplayState::Compose:
       if (input == KeyInput::A) {
         return TransitionResult{DisplayState::Menu, true};
       }
-      if (input == KeyInput::C) {
+      if (input == KeyInput::C || input == KeyInput::Hash) {
         return TransitionResult{DisplayState::Initial, true};
       }
       if (input == KeyInput::B || input == KeyInput::D || isNumericKey(input)) {
@@ -127,15 +143,16 @@ DisplayFrame buildInitialFrame(
 
 DisplayFrame buildMenuFrame(uint8_t width) {
   return DisplayFrame{
-      normalizeLineForWidth("A:Inbox B:New", width),
-      normalizeLineForWidth("Select action", width),
+      normalizeLineForWidth("1) mk msg  [MM]", width),
+      normalizeLineForWidth("2: view alerts", width),
+      normalizeLineForWidth("3: view msgs", width),
   };
 }
 
 DisplayFrame buildComposeFrame(const String& draft, size_t cursorOffset, uint8_t width) {
   return DisplayFrame{
       windowText(draft, cursorOffset, width),
-      normalizeLineForWidth("A:Back C:Send", width),
+      normalizeLineForWidth("A:Back #:Send", width),
   };
 }
 

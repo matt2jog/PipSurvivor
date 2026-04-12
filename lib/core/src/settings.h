@@ -9,6 +9,61 @@
 
 namespace DeviceSettings {
 
+// ============================================================
+// Component enable flags.
+// Set to true only when the hardware is physically connected.
+// ============================================================
+
+// Radio: true enables RYLR998/ESPNow TX+RX, false uses Mock (no-op).
+// Note: radio adapter type is still selected by PIPSURVIVOR_RADIO_* build flag.
+static constexpr bool kEnableRadio = true;
+
+// MPU6050 gyroscope for jerk/impact detection.
+static constexpr bool kEnableGyroscope = false;
+
+// BMP280 barometer for altitude change detection.
+static constexpr bool kEnableBarometer = false;
+
+// Analog/digital water level sensor for submersion detection.
+static constexpr bool kEnableWaterSensor = false;
+
+// 4x4 matrix button panel for UI input.
+static constexpr bool kEnableButtons = false;
+
+// LCD display output (set false to use serial-mirror only).
+static constexpr bool kEnableDisplay = false;
+
+// Web server / hotspot output (typically used on receiver).
+static constexpr bool kEnableWebServer = true;
+static constexpr char kApSsid[] = "PipSurvivor-Node";
+static constexpr char kApPassword[] = "survivor123!";
+static constexpr int kApChannel = 1;
+
+// Alert detection subsystem (jerk + altitude + submersion).
+// Automatically skips any sensor whose kEnable* flag is false.
+static constexpr bool kEnableAlertDetection = kEnableGyroscope || kEnableBarometer || kEnableWaterSensor;
+
+// Radio frequency and network parameters (RYLR998).
+static constexpr uint32_t kRadioBand = 915000000;
+static constexpr uint8_t kRadioNetworkId = 18;
+static constexpr uint8_t kRadioSf = 9;
+static constexpr uint8_t kRadioCr = 7;
+static constexpr uint8_t kRadioBw = 1;
+static constexpr uint8_t kRadioPreamble = 12;
+static constexpr uint16_t kRadioNodeAddress = 1; // Generic hardware address for all nodes
+static constexpr uint32_t kPingIntervalMs = 2000;
+
+// Mesh routing constants
+static constexpr uint8_t kMeshMaxHops = 7;
+static constexpr size_t kMeshCacheSize = 50;
+static constexpr uint32_t kMeshJitterMinMs = 100;
+static constexpr uint32_t kMeshJitterMaxMs = 500;
+static constexpr uint32_t kMeshAckTimeoutMs = 2000;
+  static constexpr uint8_t kMeshMaxRetries = 3;
+  static constexpr uint16_t kMeshBroadcastAddress = 0; // RYLR998 broadcast
+  static constexpr size_t kMeshHistorySize = 20;
+
+
 // Number of message entries retained in the on-device inbox/feed.
 static constexpr size_t kMaxFeedMessages = 24;
 

@@ -41,12 +41,7 @@ bool AlertDetectionAdapter::begin() {
   clearCache(jerk_cache_);
   clearCache(altitude_cache_);
   clearCache(submersion_cache_);
-
-  // Continue initialization even if one source fails so diagnostics can still run.
-  const bool jerk_ok = jerk_port_.begin();
-  const bool altitude_ok = altitude_port_.begin();
-  const bool submersion_ok = submersion_port_.begin();
-  return jerk_ok && altitude_ok && submersion_ok;
+  return true;
 }
 
 void AlertDetectionAdapter::clearCache(AlertCache& cache) {

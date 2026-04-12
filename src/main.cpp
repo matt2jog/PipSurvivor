@@ -1,5 +1,7 @@
 #include <Arduino.h>
 #include <Wire.h>
+#include <WiFi.h>
+#include <WebServer.h>
 
 #include "adapters/alert_detection_adapter.h"
 #include "adapters/barometer_altitude_adapter.h"
@@ -46,21 +48,21 @@ const char* multiTapChars(KeyInput key) {
     case KeyInput::K1:
       return "1.,!?";
     case KeyInput::K2:
-      return "ABC2";
+      return "2ABC";
     case KeyInput::K3:
-      return "DEF3";
+      return "3DEF";
     case KeyInput::K4:
-      return "GHI4";
+      return "4GHI";
     case KeyInput::K5:
-      return "JKL5";
+      return "5JKL";
     case KeyInput::K6:
-      return "MNO6";
+      return "6MNO";
     case KeyInput::K7:
-      return "PQRS7";
+      return "7PQRS";
     case KeyInput::K8:
-      return "TUV8";
+      return "8TUV";
     case KeyInput::K9:
-      return "WXYZ9";
+      return "9WXYZ";
     default:
       return "";
   }
@@ -82,15 +84,23 @@ class MainDevice {
         message_count_(0),
         selected_message_index_(0),
         selected_text_offset_(0),
-        alert_queue_count_(0),
-        last_display_render_ms_(0),
+         alert_queue_count_(0),
+         alert_count_(0),
+         selected_alert_index_(0),
+         selected_alert_text_offset_(0),
+         last_display_render_ms_(0),
         last_alert_poll_ms_(0),
+        last_ping_ms_(0),
+        ping_count_(0),
         pending_key_(KeyInput::None),
         pending_char_index_(0),
         pending_char_pos_(-1),
         pending_updated_ms_(0),
         render_dirty_(true),
-        last_rendered_frame_(DisplayFrame{"", ""}) {}
+        last_rendered_frame_(DisplayFrame{"", ""}) {
+    feed_mutex_ = xSemaphoreCreateRecursiveMutex();
+    radio_mutex_ = xSemaphoreCreateMutex();
+  }
 
   static void setInstance(MainDevice* instance) {
     instance_ = instance;
@@ -100,45 +110,77 @@ class MainDevice {
     return instance_;
   }
 
+  size_t getMessageCount() const {
+    xSemaphoreTakeRecursive(feed_mutex_, portMAX_DELAY);
+    size_t count = message_count_;
+    xSemaphoreGiveRecursive(feed_mutex_);
+    return count;
+  }
+
+  DisplayFrame getLastRenderedFrame() const {
+    xSemaphoreTakeRecursive((SemaphoreHandle_t)feed_mutex_, portMAX_DELAY);
+    DisplayFrame frame = last_rendered_frame_;
+    xSemaphoreGiveRecursive((SemaphoreHandle_t)feed_mutex_);
+    return frame;
+  }
+  
+  String getMessage(size_t index) const {
+    xSemaphoreTakeRecursive(feed_mutex_, portMAX_DELAY);
+    String msg = "";
+    if (index < message_count_) msg = message_feed_[index];
+    xSemaphoreGiveRecursive(feed_mutex_);
+    return msg;
+  }
+
   bool begin() {
     display_.clear();
 
-    const bool display_ok = true;
-    const bool buttons_ok = buttons_.begin();
-    const bool radio_ok = true;
-    const bool alert_ok = alert_detection_.begin();
+    const bool buttons_ok = DeviceSettings::kEnableButtons ? buttons_.begin() : true;
+    const bool alert_ok = DeviceSettings::kEnableAlertDetection ? alert_detection_.begin() : true;
 
     radio_.setReceiveCallback(MainDevice::onRadioMessageStatic);
 
-    AlertDetectionCallbackParams cb{};
-    cb.source = "main_device";
-    cb.channel = "radio-alert";
-    cb.severity = 2;
-    alert_detection_.setCallback(MainDevice::onAlertStatic, cb);
+    if (DeviceSettings::kEnableAlertDetection) {
+      AlertDetectionCallbackParams cb{};
+      cb.source = "main_device";
+      cb.channel = "radio-alert";
+      cb.severity = 2;
+      alert_detection_.setCallback(MainDevice::onAlertStatic, cb);
+    }
 
     addFeedMessage("System ready");
     render_dirty_ = true;
 
-    return display_ok && buttons_ok && radio_ok && alert_ok;
+    return buttons_ok && alert_ok;
   }
 
   void loop() {
-    radio_.poll();
-
-    const uint32_t now = millis();
-    if ((now - last_alert_poll_ms_) >= DeviceSettings::kAlertPollMs) {
-      AlertDetectionReading reading{};
-      alert_detection_.poll(reading);
-      last_alert_poll_ms_ = now;
+    if (DeviceSettings::kEnableAlertDetection) {
+      const uint32_t now = millis();
+      if ((now - last_alert_poll_ms_) >= DeviceSettings::kAlertPollMs) {
+        AlertDetectionReading reading{};
+        alert_detection_.poll(reading);
+        last_alert_poll_ms_ = now;
+      }
     }
 
+
+
+
+    xSemaphoreTakeRecursive(feed_mutex_, portMAX_DELAY);
     processQueuedAlerts();
+
+    const uint32_t now = millis();
     maybeCommitPendingMultiTap(now);
 
-    KeyInput key = KeyInput::None;
-    if (buttons_.readKey(key)) {
-      handleKey(key);
-      render_dirty_ = true;
+    if (DeviceSettings::kEnableButtons) {
+      KeyInput key = KeyInput::None;
+      if (buttons_.readKey(key)) {
+        Serial.print("[BTN] key=");
+        Serial.println(static_cast<int>(key));
+        handleKey(key);
+        render_dirty_ = true;
+      }
     }
 
     if (render_dirty_ || (now - last_display_render_ms_) >= DeviceSettings::kDisplayRefreshMs) {
@@ -146,7 +188,11 @@ class MainDevice {
       last_display_render_ms_ = now;
       render_dirty_ = false;
     }
+
+    xSemaphoreGiveRecursive(feed_mutex_);
   }
+
+  uint32_t getUptime() const { return millis() / 1000; }
 
  private:
   static MainDevice* instance_;
@@ -166,6 +212,7 @@ class MainDevice {
   }
 
   void onRadioMessage(const String& message) {
+    Serial.println("[RADIO_RX] " + message);
     addFeedMessage("RX:" + message);
     render_dirty_ = true;
   }
@@ -207,7 +254,13 @@ class MainDevice {
     alert_queue_count_--;
 
     addFeedMessage(alert);
-    if (!radio_.sendAlert(alert, 1)) {
+    addAlertMessage(alert);
+    
+    xSemaphoreTake(radio_mutex_, portMAX_DELAY);
+    bool ok = radio_.sendAlert(alert, DeviceSettings::kMeshMaxHops);
+    xSemaphoreGive(radio_mutex_);
+    
+    if (!ok) {
       enterError("alert send fail");
     }
   }
@@ -229,6 +282,7 @@ class MainDevice {
   }
 
   void addFeedMessage(const String& message) {
+    xSemaphoreTakeRecursive(feed_mutex_, portMAX_DELAY);
     if (message_count_ < DeviceSettings::kMaxFeedMessages) {
       message_feed_[message_count_] = message;
       message_count_++;
@@ -243,6 +297,26 @@ class MainDevice {
       selected_message_index_ = message_count_ - 1;
       selected_text_offset_ = 0;
     }
+    xSemaphoreGiveRecursive(feed_mutex_);
+  }
+
+  void addAlertMessage(const String& message) {
+    xSemaphoreTakeRecursive(feed_mutex_, portMAX_DELAY);
+    if (alert_count_ < DeviceSettings::kMaxFeedMessages) {
+      alert_feed_[alert_count_] = message;
+      alert_count_++;
+    } else {
+      for (size_t i = 1; i < DeviceSettings::kMaxFeedMessages; ++i) {
+        alert_feed_[i - 1] = alert_feed_[i];
+      }
+      alert_feed_[DeviceSettings::kMaxFeedMessages - 1] = message;
+    }
+
+    if (alert_count_ > 0) {
+      selected_alert_index_ = alert_count_ - 1;
+      selected_alert_text_offset_ = 0;
+    }
+    xSemaphoreGiveRecursive(feed_mutex_);
   }
 
   void maybeCommitPendingMultiTap(uint32_t nowMs) {
@@ -322,18 +396,23 @@ class MainDevice {
       return;
     }
 
-    if (key == KeyInput::C) {
+    if (key == KeyInput::C || key == KeyInput::Hash) {
       commitPendingMultiTap();
 
       if (compose_draft_.length() == 0) {
         return;
       }
 
-      if (!radio_.sendMessage(compose_draft_, 1)) {
+      xSemaphoreTake(radio_mutex_, portMAX_DELAY);
+      bool ok = radio_.sendMessage(compose_draft_, DeviceSettings::kMeshMaxHops);
+      xSemaphoreGive(radio_mutex_);
+
+      if (!ok) {
         enterError("msg send fail");
         return;
       }
 
+      Serial.println("[RADIO_TX] " + compose_draft_);
       addFeedMessage("TX:" + compose_draft_);
       compose_draft_ = "";
       state_ = DisplayState::Initial;
@@ -347,9 +426,11 @@ class MainDevice {
       return;
     }
 
+    const DisplayState oldState = state_;
     if (state_ == DisplayState::Error) {
       if (key == KeyInput::Ack || key == KeyInput::A) {
         acknowledgeError();
+        Serial.printf("[STATE] Error -> %d (ACK)\n", static_cast<int>(state_));
       }
       return;
     }
@@ -360,21 +441,21 @@ class MainDevice {
           state_ = DisplayState::Menu;
           return;
         }
-        if (key == KeyInput::Star && message_count_ > 0 && selected_message_index_ > 0) {
+        if (key == KeyInput::B && message_count_ > 0 && selected_message_index_ > 0) {
           selected_message_index_--;
           selected_text_offset_ = 0;
           return;
         }
-        if (key == KeyInput::Hash && message_count_ > 0 && selected_message_index_ + 1 < message_count_) {
+        if (key == KeyInput::C && message_count_ > 0 && selected_message_index_ + 1 < message_count_) {
           selected_message_index_++;
           selected_text_offset_ = 0;
           return;
         }
-        if (key == KeyInput::B && selected_text_offset_ > 0) {
+        if (key == KeyInput::Star && selected_text_offset_ > 0) {
           selected_text_offset_--;
           return;
         }
-        if (key == KeyInput::C && message_count_ > 0) {
+        if (key == KeyInput::Hash && message_count_ > 0) {
           const String& msg = message_feed_[selected_message_index_];
           if (selected_text_offset_ + 1 < msg.length()) {
             selected_text_offset_++;
@@ -384,67 +465,143 @@ class MainDevice {
         return;
 
       case DisplayState::Menu:
-        if (key == KeyInput::A) {
+        if (key == KeyInput::A || key == KeyInput::Hash) {
           state_ = DisplayState::Initial;
           return;
         }
-        if (key == KeyInput::B) {
+        if (key == KeyInput::K1) {
           state_ = DisplayState::Compose;
+          return;
+        }
+        if (key == KeyInput::K2) {
+          state_ = DisplayState::ViewAlerts;
+          return;
+        }
+        if (key == KeyInput::K3) {
+          state_ = DisplayState::Initial;
+          return;
+        }
+        return;
+
+      case DisplayState::ViewAlerts:
+        if (key == KeyInput::A) {
+          state_ = DisplayState::Menu;
+          return;
+        }
+        if (key == KeyInput::B && alert_count_ > 0 && selected_alert_index_ > 0) {
+          selected_alert_index_--;
+          selected_alert_text_offset_ = 0;
+          return;
+        }
+        if (key == KeyInput::C && alert_count_ > 0 && selected_alert_index_ + 1 < alert_count_) {
+          selected_alert_index_++;
+          selected_alert_text_offset_ = 0;
+          return;
+        }
+        if (key == KeyInput::Star && selected_alert_text_offset_ > 0) {
+          selected_alert_text_offset_--;
+          return;
+        }
+        if (key == KeyInput::Hash && alert_count_ > 0) {
+          const String& a = alert_feed_[selected_alert_index_];
+          if (selected_alert_text_offset_ + 1 < a.length()) {
+            selected_alert_text_offset_++;
+          }
           return;
         }
         return;
 
       case DisplayState::Compose:
+        if (key == KeyInput::Star || key == KeyInput::Hash) {
+          return;
+        }
         handleComposeKey(key);
         return;
 
       case DisplayState::Error:
         return;
     }
+    if (state_ != oldState) {
+      Serial.printf("[STATE] %d -> %d\n", static_cast<int>(oldState), static_cast<int>(state_));
+    }
   }
 
   DisplayFrame currentFrame() {
+    DisplayFrame f{"", "", "", ""};
     switch (state_) {
-      case DisplayState::Initial:
-        return buildInitialFrame(
-            message_feed_,
-            message_count_,
-            selected_message_index_,
-            selected_text_offset_,
-            display_.width());
+      case DisplayState::Initial: {
+        String content = "Inbox Empty";
+        String meta = "Up:" + String(millis()/1000) + "s";
+        if (message_count_ > 0) {
+          content = message_feed_[selected_message_index_];
+          if (selected_text_offset_ < content.length()) {
+            content = content.substring(selected_text_offset_);
+          }
+          meta = "Msg " + String(selected_message_index_ + 1) + "/" + String(message_count_);
+        }
+        f.line1 = content;
+        f.line2 = meta;
+        f.hint  = "A:Menu B:Up C:Dn";
+        break;
+      }
 
       case DisplayState::Menu:
-        return buildMenuFrame(display_.width());
+        f.line1 = "1) mk msg  [MM]";
+        f.line2 = "2) view alerts";
+        f.line3 = "3) view msgs";
+        return f;
+
+      case DisplayState::ViewAlerts: {
+        String content = "No Alerts";
+        String meta = "";
+        if (alert_count_ > 0) {
+          content = alert_feed_[selected_alert_index_];
+          if (selected_alert_text_offset_ < content.length()) {
+            content = content.substring(selected_alert_text_offset_);
+          }
+          meta = "Alert " + String(selected_alert_index_ + 1) + "/" + String(alert_count_);
+        }
+        f.line1 = content;
+        f.line2 = meta;
+        f.hint  = "A:Menu B:Up C:Dn";
+        break;
+      }
 
       case DisplayState::Compose: {
-        size_t offset = 0;
-        if (compose_draft_.length() > display_.width()) {
-          offset = compose_draft_.length() - display_.width();
-        }
-        return buildComposeFrame(compose_draft_, offset, display_.width());
+        f.line1 = "Typing: " + compose_draft_;
+        f.line2 = "Len: " + String(compose_draft_.length()) + "/160";
+        f.hint  = "A:BCK C:SND D:BS";
+        break;
       }
 
       case DisplayState::Error:
-        return buildErrorFrame(error_message_, display_.width());
+        f.line1 = "!! ERROR !!";
+        f.line2 = error_message_;
+        f.hint  = "A:ACKNOWLEDGE";
+        break;
     }
 
-    return buildErrorFrame("invalid state", display_.width());
+    f.line3 = f.hint;
+    return f;
   }
 
   void render() {
     const DisplayFrame frame = currentFrame();
-    if (frame.line1 == last_rendered_frame_.line1 && frame.line2 == last_rendered_frame_.line2) {
+    if (frame.line1 == last_rendered_frame_.line1 && 
+        frame.line2 == last_rendered_frame_.line2 && 
+        frame.line3 == last_rendered_frame_.line3) {
       return;
     }
 
     display_.renderFrame(frame);
     last_rendered_frame_ = frame;
 
-    // Serial mirror is useful for bring-up when using a non-physical display adapter.
-    Serial.print("[LCD] ");
+    Serial.print("[LCD] L1:");
     Serial.print(frame.line1);
-    Serial.print(" | ");
-    Serial.println(frame.line2);
+    Serial.print(" | L2:");
+    Serial.print(frame.line2);
+    Serial.print(" | L3:");
+    Serial.println(frame.line3);
   }
 
   DisplayPort& display_;
@@ -470,24 +627,95 @@ class MainDevice {
   String alert_queue_[DeviceSettings::kMaxQueuedAlerts];
   size_t alert_queue_count_;
 
+  String alert_feed_[DeviceSettings::kMaxFeedMessages];
+  size_t alert_count_;
+  size_t selected_alert_index_;
+  size_t selected_alert_text_offset_;
+
   uint32_t last_display_render_ms_;
   uint32_t last_alert_poll_ms_;
+  uint32_t last_ping_ms_;
+  uint16_t ping_count_;
   bool render_dirty_;
   DisplayFrame last_rendered_frame_;
+
+ public:
+  SemaphoreHandle_t feed_mutex_;
+  SemaphoreHandle_t radio_mutex_;
 };
 
 MainDevice* MainDevice::instance_ = nullptr;
 
+class WebButtonAdapter : public ButtonPanelPort {
+ public:
+  WebButtonAdapter() : head_(0), tail_(0) {
+    mutex_ = xSemaphoreCreateMutex();
+  }
+
+  bool begin() override { return true; }
+
+  bool readKey(KeyInput& key) override {
+    xSemaphoreTake(mutex_, portMAX_DELAY);
+    bool has_key = false;
+    if (head_ != tail_) {
+      key = queue_[head_];
+      head_ = (head_ + 1) % 16;
+      has_key = true;
+    }
+    xSemaphoreGive(mutex_);
+    return has_key;
+  }
+
+  void pushKey(KeyInput key) {
+    xSemaphoreTake(mutex_, portMAX_DELAY);
+    uint8_t next_tail = (tail_ + 1) % 16;
+    if (next_tail != head_) {
+      queue_[tail_] = key;
+      tail_ = next_tail;
+    }
+    xSemaphoreGive(mutex_);
+  }
+
+ private:
+  KeyInput queue_[16];
+  uint8_t head_;
+  uint8_t tail_;
+  SemaphoreHandle_t mutex_;
+};
+
+class CompositeButtonAdapter : public ButtonPanelPort {
+ public:
+  CompositeButtonAdapter(ButtonPanelPort& a, ButtonPanelPort& b) : a_(a), b_(b) {}
+  bool begin() override {
+    a_.begin();
+    b_.begin();
+    return true;
+  }
+  bool readKey(KeyInput& key) override {
+    if (a_.readKey(key)) return true;
+    if (b_.readKey(key)) return true;
+    return false;
+  }
+ private:
+  ButtonPanelPort& a_;
+  ButtonPanelPort& b_;
+};
+
+
+
 MockDisplayAdapter g_display(16, 2);
-MatrixButtonPanelAdapter g_buttons(
+MatrixButtonPanelAdapter g_physical_buttons(
   DeviceSettings::kButtonRows,
   DeviceSettings::kButtonCols,
   DeviceSettings::kButtonDebounceMs);
 
+WebButtonAdapter g_web_buttons;
+CompositeButtonAdapter g_buttons(g_physical_buttons, g_web_buttons);
+
 #if defined(PIPSURVIVOR_RADIO_ESPNOW)
 EspNowRadioAdapter g_radio_impl(DeviceSettings::buildRadioConfig(), 0);
 #elif defined(PIPSURVIVOR_RADIO_RYLR998)
-Rylr998RadioAdapter g_radio_impl(DeviceSettings::buildRadioConfig(), Serial2, 1, 115200);
+Rylr998RadioAdapter g_radio_impl(DeviceSettings::buildRadioConfig(), Serial2, DeviceSettings::kMeshBroadcastAddress, 115200);
 #else
 MockRadioAdapter g_radio_impl(DeviceSettings::buildRadioConfig());
 #endif
@@ -519,19 +747,300 @@ AlertDetectionAdapter g_alert_detection(
 
 MainDevice g_device(g_display, g_buttons, g_radio, g_alert_detection);
 
+WebServer g_web_server(80);
+
+void handleRoot() {
+  Serial.println("[HTTP] GET / (root page)");
+  String html = R"HTML(
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>PipSurvivor 16x3</title>
+  <style>
+    :root {
+      --bg: #0b0f19;
+      --lcd-bg: #8bac0f;
+      --lcd-text: #0f380f;
+    }
+    body {
+      background-color: var(--bg);
+      margin: 0;
+      height: 100vh;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      font-family: system-ui, sans-serif;
+    }
+    .container { width: 100%; max-width: 400px; padding: 1rem; }
+    .lcd {
+      background: #111;
+      padding: 15px;
+      border-radius: 10px;
+      border: 4px solid #333;
+      margin-bottom: 2rem;
+      box-shadow: 0 10px 30px rgba(0,0,0,0.8);
+    }
+    .lcd-screen {
+      background: var(--lcd-bg);
+      color: var(--lcd-text);
+      font-family: 'Courier New', monospace;
+      padding: 15px;
+      border-radius: 4px;
+      font-size: 1.6rem;
+      line-height: 1.3;
+      white-space: pre;
+      font-weight: 900;
+      box-shadow: inset 0 0 15px rgba(0,0,0,0.5);
+    }
+    .line { height: 1.8rem; overflow: hidden; }
+    .keypad {
+      display: grid;
+      grid-template-columns: repeat(4, 1fr);
+      gap: 12px;
+      background: #1a1a2e;
+      padding: 20px;
+      border-radius: 20px;
+      border: 4px solid #2a2a40;
+    }
+    .key {
+      aspect-ratio: 1;
+      border: none;
+      border-radius: 10px;
+      color: #fff;
+      cursor: pointer;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      box-shadow: 0 5px 0 #000;
+    }
+    .key:active { transform: translateY(4px); box-shadow: none; }
+    .key.n { background: #313244; }
+    .key.f { background: #f38ba8; }
+    .km { font-size: 1.8rem; font-weight: 800; }
+    .ks { font-size: 0.6rem; opacity: 0.8; }
+  </style>
+  <script>
+    function pk(k) { fetch('/key?k=' + k); }
+    async function u() {
+      try {
+        const r = await fetch('/lcd');
+        const d = await r.json();
+        document.getElementById('l1').textContent = (d.l1 + "                ").substring(0, 16);
+        document.getElementById('l2').textContent = (d.l2 + "                ").substring(0, 16);
+        document.getElementById('l3').textContent = (d.l3 + "                ").substring(0, 16);
+      } catch(e) {}
+    }
+    setInterval(u, 300);
+  </script>
+</head>
+<body>
+  <div class="container">
+    <div class="lcd">
+      <div class="lcd-screen">
+        <div id="l1" class="line"></div>
+        <div id="l2" class="line"></div>
+        <div id="l3" class="line"></div>
+      </div>
+    </div>
+    <div class="keypad">
+      <button class="key n" onclick="pk('K1')"><div class="km">1</div><div class="ks">.,!?</div></button>
+      <button class="key n" onclick="pk('K2')"><div class="km">2</div><div class="ks">ABC</div></button>
+      <button class="key n" onclick="pk('K3')"><div class="km">3</div><div class="ks">DEF</div></button>
+      <button class="key f" onclick="pk('A')"><div class="km">A</div><div class="ks">MENU</div></button>
+      <button class="key n" onclick="pk('K4')"><div class="km">4</div><div class="ks">GHI</div></button>
+      <button class="key n" onclick="pk('K5')"><div class="km">5</div><div class="ks">JKL</div></button>
+      <button class="key n" onclick="pk('K6')"><div class="km">6</div><div class="ks">MNO</div></button>
+      <button class="key f" onclick="pk('B')"><div class="km">B</div><div class="ks">UP</div></button>
+      <button class="key n" onclick="pk('K7')"><div class="km">7</div><div class="ks">PQRS</div></button>
+      <button class="key n" onclick="pk('K8')"><div class="km">8</div><div class="ks">TUV</div></button>
+      <button class="key n" onclick="pk('K9')"><div class="km">9</div><div class="ks">WXYZ</div></button>
+      <button class="key f" onclick="pk('C')"><div class="km">C</div><div class="ks">DOWN</div></button>
+      <button class="key f" onclick="pk('Star')"><div class="km">*</div><div class="ks">LEFT</div></button>
+      <button class="key n" onclick="pk('K0')"><div class="km">0</div><div class="ks">_</div></button>
+      <button class="key f" onclick="pk('Hash')"><div class="km">#</div><div class="ks">RIGHT</div></button>
+      <button class="key f" onclick="pk('D')"><div class="km">D</div><div class="ks">DEL</div></button>
+    </div>
+  </div>
+</body>
+</html>
+)HTML";
+  g_web_server.send(200, "text/html", html);
+}
+
+
+void backgroundReceiverTask(void* parameter) {
+  for (;;) {
+    if (DeviceSettings::kEnableRadio && MainDevice::instance() != nullptr) {
+      xSemaphoreTake(MainDevice::instance()->radio_mutex_, portMAX_DELAY);
+      g_radio.poll();
+      xSemaphoreGive(MainDevice::instance()->radio_mutex_);
+    }
+
+    if (DeviceSettings::kEnableWebServer) {
+      g_web_server.handleClient();
+    }
+    vTaskDelay(pdMS_TO_TICKS(10));
+  }
+}
+
+void handleKeyInput() {
+  if (g_web_server.hasArg("k")) {
+    String k = g_web_server.arg("k");
+    KeyInput key = KeyInput::None;
+    if (k == "K1") key = KeyInput::K1;
+    else if (k == "K2") key = KeyInput::K2;
+    else if (k == "K3") key = KeyInput::K3;
+    else if (k == "K4") key = KeyInput::K4;
+    else if (k == "K5") key = KeyInput::K5;
+    else if (k == "K6") key = KeyInput::K6;
+    else if (k == "K7") key = KeyInput::K7;
+    else if (k == "K8") key = KeyInput::K8;
+    else if (k == "K9") key = KeyInput::K9;
+    else if (k == "K0") key = KeyInput::K0;
+    else if (k == "A") key = KeyInput::A;
+    else if (k == "B") key = KeyInput::B;
+    else if (k == "C") key = KeyInput::C;
+    else if (k == "D") key = KeyInput::D;
+    else if (k == "Star") key = KeyInput::Star;
+    else if (k == "Hash") key = KeyInput::Hash;
+    
+    if (key != KeyInput::None) {
+      Serial.printf("[HTTP] Key Input: %s\n", k.c_str());
+      g_web_buttons.pushKey(key);
+    }
+  }
+  g_web_server.send(200, "text/plain", "OK");
+}
+
+void handleFeed() {
+  g_web_server.send(404, "text/plain", "Removed");
+}
+
+void handleLcd() {
+  DisplayFrame frame = g_device.getLastRenderedFrame();
+  
+  auto escape = [](String s) {
+    s.replace("\\", "\\\\");
+    s.replace("\"", "\\\"");
+    return s;
+  };
+
+  String json = "{";
+  json += "\"l1\":\"" + escape(frame.line1) + "\",";
+  json += "\"l2\":\"" + escape(frame.line2) + "\",";
+  json += "\"l3\":\"" + escape(frame.line3) + "\"";
+  json += "}";
+  
+  Serial.println("[HTTP] /lcd -> " + json);
+  g_web_server.send(200, "application/json", json);
+}
+
+void handleMesh() {
+  if (xSemaphoreTake(MainDevice::instance()->radio_mutex_, pdMS_TO_TICKS(50)) == pdFALSE) {
+    g_web_server.send(503, "text/plain", "Busy");
+    return;
+  }
+
+  MeshMessageEntry entries[DeviceSettings::kMeshHistorySize];
+  size_t count = 0;
+  uint32_t total_rx = 0;
+  size_t cache_size = 0;
+  size_t relay_jobs = 0;
+
+  g_radio.getRecentMessages(entries, DeviceSettings::kMeshHistorySize, count);
+  g_radio.getMeshStats(total_rx, cache_size, relay_jobs);
+
+  uint32_t my_uid = g_radio.getDeviceUid();
+  xSemaphoreGive(MainDevice::instance()->radio_mutex_);
+
+  auto escape = [](String s) {
+    s.replace("\\", "\\\\");
+    s.replace("\"", "\\\"");
+    s.replace("\n", "\\n");
+    s.replace("\r", "\\r");
+    return s;
+  };
+
+  String json = "{";
+  json += "\"my_uid\":\"" + String(my_uid, HEX) + "\",";
+  json += "\"messages\":[";
+
+  uint32_t now = millis();
+  for (size_t i = 0; i < count; i++) {
+    if (i > 0) json += ",";
+    json += "{\"sender\":\"" + String(entries[i].sender_uid, HEX) + "\",";
+    json += "\"msg_id\":" + String(entries[i].msg_id) + ",";
+    json += "\"ttl\":" + String(entries[i].ttl) + ",";
+    json += "\"payload\":\"" + escape(entries[i].payload) + "\",";
+    json += "\"age_ms\":" + String(now - entries[i].recv_time_ms) + "}";
+  }
+
+  json += "],\"stats\":{";
+  json += "\"total_rx\":" + String(total_rx) + ",";
+  json += "\"cache_size\":" + String(cache_size) + ",";
+  json += "\"relay_jobs\":" + String(relay_jobs) + "}}";
+
+  Serial.println("[HTTP] /mesh -> " + json);
+  g_web_server.send(200, "application/json", json);
+}
+
+void initWebServer() {
+  if (!DeviceSettings::kEnableWebServer) return;
+
+  uint8_t mac[6];
+  WiFi.macAddress(mac);
+  char ssidBuffer[32];
+  snprintf(ssidBuffer, sizeof(ssidBuffer), "%s-%02X%02X", DeviceSettings::kApSsid, mac[4], mac[5]);
+
+  Serial.print("[WIFI] Starting AP: ");
+  Serial.println(ssidBuffer);
+  WiFi.softAP(ssidBuffer, DeviceSettings::kApPassword);
+  
+  g_web_server.on("/", handleRoot);
+  g_web_server.on("/key", handleKeyInput);
+  g_web_server.on("/feed", handleFeed);
+  g_web_server.on("/lcd", handleLcd);
+  g_web_server.on("/mesh", handleMesh);
+  g_web_server.begin();
+  Serial.print("[WIFI] AP started. Root IP: ");
+  Serial.println(WiFi.softAPIP());
+}
+
 }  // namespace
 
 void setup() {
   Serial.begin(115200);
   delay(200);
 
-  // Initialize the specific I2C bus pins required by this board configuration.
-  Wire.begin(DeviceSettings::kI2cPinSda, DeviceSettings::kI2cPinScl);
+  Serial.println("[BOOT] PipSurvivor starting...");
+  Serial.println(DeviceSettings::kEnableRadio         ? "[BOOT] radio:       ON"  : "[BOOT] radio:       OFF");
+  Serial.println(DeviceSettings::kEnableGyroscope     ? "[BOOT] gyroscope:   ON"  : "[BOOT] gyroscope:   OFF");
+  Serial.println(DeviceSettings::kEnableBarometer     ? "[BOOT] barometer:   ON"  : "[BOOT] barometer:   OFF");
+  Serial.println(DeviceSettings::kEnableWaterSensor   ? "[BOOT] water:       ON"  : "[BOOT] water:       OFF");
+  Serial.println(DeviceSettings::kEnableButtons       ? "[BOOT] buttons:     ON"  : "[BOOT] buttons:     OFF");
+  Serial.println(DeviceSettings::kEnableDisplay       ? "[BOOT] display:     ON"  : "[BOOT] display:     OFF");
+
+  // I2C is only needed when at least one I2C sensor is enabled.
+  if (DeviceSettings::kEnableGyroscope || DeviceSettings::kEnableBarometer) {
+    Wire.begin(DeviceSettings::kI2cPinSda, DeviceSettings::kI2cPinScl);
+  }
+
+  // Initialize individual sensors guarded by their enable flags.
+  if (DeviceSettings::kEnableGyroscope)   { g_gyro.begin(); }
+  if (DeviceSettings::kEnableBarometer)   { g_bmp.begin(); }
+  if (DeviceSettings::kEnableWaterSensor) { g_water_sensor.begin(); }
 
 #if defined(PIPSURVIVOR_RADIO_ESPNOW)
-  g_radio_impl.begin();
+  if (DeviceSettings::kEnableRadio) g_radio_impl.begin();
 #elif defined(PIPSURVIVOR_RADIO_RYLR998)
-  Serial2.begin(115200, SERIAL_8N1, DeviceSettings::kRadioRxPin, DeviceSettings::kRadioTxPin);
+  if (DeviceSettings::kEnableRadio) {
+    Serial2.begin(115200, SERIAL_8N1, DeviceSettings::kRadioRxPin, DeviceSettings::kRadioTxPin);
+    g_radio_impl.begin();
+  }
 #endif
 
   MainDevice::setInstance(&g_device);
@@ -540,6 +1049,17 @@ void setup() {
   const bool ok = g_device.begin();
   Serial.print("[MAIN_DEVICE] begin status: ");
   Serial.println(ok ? "OK" : "PARTIAL/FAIL");
+
+  initWebServer();
+
+  xTaskCreatePinnedToCore(
+      backgroundReceiverTask,
+      "BgReceiver",
+      8192,
+      NULL,
+      1,
+      NULL,
+      0); // Run on Core 0
 }
 
 void loop() {
