@@ -83,32 +83,39 @@ void EspNowRadioAdapter::poll() {
     return;
   }
 
-  const String next_message = incoming_[0];
+  String raw = incoming_[0];
+  uint8_t hops = incoming_hops_[0];
   for (size_t i = 1; i < incoming_count_; ++i) {
     incoming_[i - 1] = incoming_[i];
+    incoming_hops_[i - 1] = incoming_hops_[i];
   }
   incoming_count_--;
 
-  uint8_t hops = 0;
-  const int firstPipe = next_message.indexOf('|');
-  if (firstPipe > 0) {
-    const int secondPipe = next_message.indexOf('|', firstPipe + 1);
-    if (secondPipe > firstPipe) {
-      hops = static_cast<uint8_t>(next_message.substring(firstPipe + 1, secondPipe).toInt());
-    }
-  }
-
-  notifyMessageReceived(next_message, hops);
+  String msg = unwrapWirePayload(raw);
+  notifyMessageReceived(msg, hops);
 }
 
-bool EspNowRadioAdapter::enqueueIncoming(const String& rawPayload) {
+bool EspNowRadioAdapter::enqueueIncoming(const String& rawPayload, uint8_t hops) {
   if (incoming_count_ >= kMaxIncomingQueue) {
     return false;
   }
 
-  incoming_[incoming_count_] = unwrapWirePayload(rawPayload);
+  incoming_[incoming_count_] = rawPayload;
+  incoming_hops_[incoming_count_] = hops;
   incoming_count_++;
   return true;
+}
+
+uint8_t EspNowRadioAdapter::parseHopsFromWirePayload(const String& wirePayload) const {
+  const int firstPipe = wirePayload.indexOf('|');
+  if (firstPipe < 0) {
+    return 0;
+  }
+  const int secondPipe = wirePayload.indexOf('|', firstPipe + 1);
+  if (secondPipe < 0) {
+    return 0;
+  }
+  return static_cast<uint8_t>(wirePayload.substring(firstPipe + 1, secondPipe).toInt());
 }
 
 String EspNowRadioAdapter::unwrapWirePayload(const String& wirePayload) const {
@@ -149,12 +156,13 @@ void EspNowRadioAdapter::onReceive(const uint8_t* data, int len) {
     return;
   }
 
-  String payload;
-  payload.reserve(static_cast<size_t>(len));
+  String rawPayload;
+  rawPayload.reserve(static_cast<size_t>(len));
   for (int i = 0; i < len; ++i) {
-    payload += static_cast<char>(data[i]);
+    rawPayload += static_cast<char>(data[i]);
   }
 
-  enqueueIncoming(payload);
+  uint8_t hops = parseHopsFromWirePayload(rawPayload);
+  enqueueIncoming(rawPayload, hops);
 }
 #endif

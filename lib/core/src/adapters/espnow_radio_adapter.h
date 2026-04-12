@@ -22,8 +22,9 @@ class EspNowRadioAdapter : public RadioPort {
   void poll() override;
 
  private:
-  bool enqueueIncoming(const String& rawPayload);
+  bool enqueueIncoming(const String& rawPayload, uint8_t hops);
   bool sendWirePayload(char type, const String& payload, uint8_t hops);
+  uint8_t parseHopsFromWirePayload(const String& wirePayload) const;
   String unwrapWirePayload(const String& wirePayload) const;
 
 #if defined(ESP32)
@@ -40,6 +41,7 @@ class EspNowRadioAdapter : public RadioPort {
   uint8_t broadcast_peer_[6];
 
   String incoming_[kMaxIncomingQueue];
+  uint8_t incoming_hops_[kMaxIncomingQueue];
   size_t incoming_count_;
 
   static EspNowRadioAdapter* active_instance_;
