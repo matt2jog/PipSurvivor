@@ -38,7 +38,7 @@ static constexpr bool kEnableWaterSensor = true;
 static constexpr bool kEnableButtons = true;
 
 // LCD display output (set false to use serial-mirror only).
-static constexpr bool kEnableDisplay = true;
+static constexpr bool kEnableDisplay = false;
 
 // Web server / hotspot output (typically used on receiver).
 static constexpr bool kEnableWebServer = true;

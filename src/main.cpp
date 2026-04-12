@@ -87,11 +87,9 @@ class MainDevice {
         previous_state_(DisplayState::Initial),
         message_count_(0),
         selected_message_index_(0),
-        selected_text_offset_(0),
          alert_queue_count_(0),
          alert_count_(0),
          selected_alert_index_(0),
-         selected_alert_text_offset_(0),
          last_display_render_ms_(0),
         last_alert_poll_ms_(0),
         last_ping_ms_(0),
@@ -328,7 +326,6 @@ class MainDevice {
 
     if (message_count_ > 0) {
       selected_message_index_ = message_count_ - 1;
-      selected_text_offset_ = 0;
     }
     xSemaphoreGiveRecursive(feed_mutex_);
   }
@@ -347,7 +344,6 @@ class MainDevice {
 
     if (alert_count_ > 0) {
       selected_alert_index_ = alert_count_ - 1;
-      selected_alert_text_offset_ = 0;
     }
     xSemaphoreGiveRecursive(feed_mutex_);
   }
@@ -476,25 +472,13 @@ class MainDevice {
         }
         if (key == KeyInput::B && message_count_ > 0 && selected_message_index_ > 0) {
           selected_message_index_--;
-          selected_text_offset_ = 0;
           return;
         }
         if (key == KeyInput::C && message_count_ > 0 && selected_message_index_ + 1 < message_count_) {
           selected_message_index_++;
-          selected_text_offset_ = 0;
           return;
         }
-        if (key == KeyInput::Star && selected_text_offset_ > 0) {
-          selected_text_offset_--;
-          return;
-        }
-        if (key == KeyInput::Hash && message_count_ > 0) {
-          const String& msg = message_feed_[selected_message_index_];
-          if (selected_text_offset_ + 1 < msg.length()) {
-            selected_text_offset_++;
-          }
-          return;
-        }
+
         return;
 
       case DisplayState::Menu:
@@ -523,25 +507,13 @@ class MainDevice {
         }
         if (key == KeyInput::B && alert_count_ > 0 && selected_alert_index_ > 0) {
           selected_alert_index_--;
-          selected_alert_text_offset_ = 0;
           return;
         }
         if (key == KeyInput::C && alert_count_ > 0 && selected_alert_index_ + 1 < alert_count_) {
           selected_alert_index_++;
-          selected_alert_text_offset_ = 0;
           return;
         }
-        if (key == KeyInput::Star && selected_alert_text_offset_ > 0) {
-          selected_alert_text_offset_--;
-          return;
-        }
-        if (key == KeyInput::Hash && alert_count_ > 0) {
-          const String& a = alert_feed_[selected_alert_index_];
-          if (selected_alert_text_offset_ + 1 < a.length()) {
-            selected_alert_text_offset_++;
-          }
-          return;
-        }
+
         return;
 
       case DisplayState::Compose:
@@ -566,9 +538,16 @@ class MainDevice {
         String content = "Inbox Empty";
         String meta = "Up:" + String(millis()/1000) + "s";
         if (message_count_ > 0) {
-          content = message_feed_[selected_message_index_];
-          if (selected_text_offset_ < content.length()) {
-            content = content.substring(selected_text_offset_);
+          const String& msg = message_feed_[selected_message_index_];
+          uint8_t dw = display_.width();
+          if (msg.length() > dw) {
+            size_t maxOff = msg.length() - dw;
+            float phase = fmodf(millis() / 1000.0f * 0.15f, 1.0f);
+            float tri = phase < 0.5f ? phase * 2.0f : 2.0f - phase * 2.0f;
+            size_t off = static_cast<size_t>(tri * maxOff);
+            content = msg.substring(off, off + dw);
+          } else {
+            content = msg;
           }
           meta = "Msg " + String(selected_message_index_ + 1) + "/" + String(message_count_);
         }
@@ -588,9 +567,16 @@ class MainDevice {
         String content = "No Alerts";
         String meta = "";
         if (alert_count_ > 0) {
-          content = alert_feed_[selected_alert_index_];
-          if (selected_alert_text_offset_ < content.length()) {
-            content = content.substring(selected_alert_text_offset_);
+          const String& alert = alert_feed_[selected_alert_index_];
+          uint8_t dw = display_.width();
+          if (alert.length() > dw) {
+            size_t maxOff = alert.length() - dw;
+            float phase = fmodf(millis() / 1000.0f * 0.15f, 1.0f);
+            float tri = phase < 0.5f ? phase * 2.0f : 2.0f - phase * 2.0f;
+            size_t off = static_cast<size_t>(tri * maxOff);
+            content = alert.substring(off, off + dw);
+          } else {
+            content = alert;
           }
           meta = "Alert " + String(selected_alert_index_ + 1) + "/" + String(alert_count_);
         }
@@ -601,7 +587,17 @@ class MainDevice {
       }
 
       case DisplayState::Compose: {
-        f.line1 = "Typing: " + compose_draft_;
+        String full = "Typing: " + compose_draft_;
+        uint8_t dw = display_.width();
+        if (full.length() > dw) {
+          size_t maxOff = full.length() - dw;
+          float phase = fmodf(millis() / 1000.0f * 0.15f, 1.0f);
+          float tri = phase < 0.5f ? phase * 2.0f : 2.0f - phase * 2.0f;
+          size_t off = static_cast<size_t>(tri * maxOff);
+          f.line1 = full.substring(off, off + dw);
+        } else {
+          f.line1 = full;
+        }
         f.line2 = "Len: " + String(compose_draft_.length()) + "/160";
         f.hint  = "A:BCK C:SND D:BS";
         break;
@@ -649,7 +645,6 @@ class MainDevice {
   String message_feed_[DeviceSettings::kMaxFeedMessages];
   size_t message_count_;
   size_t selected_message_index_;
-  size_t selected_text_offset_;
 
   String compose_draft_;
   KeyInput pending_key_;
@@ -663,7 +658,6 @@ class MainDevice {
   String alert_feed_[DeviceSettings::kMaxFeedMessages];
   size_t alert_count_;
   size_t selected_alert_index_;
-  size_t selected_alert_text_offset_;
 
   uint32_t last_display_render_ms_;
   uint32_t last_alert_poll_ms_;
