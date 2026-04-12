@@ -17,14 +17,15 @@ class EspNowRadioAdapter : public RadioPort {
   explicit EspNowRadioAdapter(const RadioConfig& config, uint8_t channel = 0);
 
   bool begin();
-  bool sendMessage(const String& message, uint8_t hops) override;
-  bool sendAlert(const String& alert, uint8_t hops) override;
+  bool sendMessage(const String& message, uint8_t hops, uint32_t msg_id = 0) override;
+  bool sendAlert(const String& alert, uint8_t hops, uint32_t msg_id = 0) override;
   void poll() override;
 
  private:
   bool enqueueIncoming(const String& rawPayload, uint8_t hops);
-  bool sendWirePayload(char type, const String& payload, uint8_t hops);
+  bool sendWirePayload(char type, const String& payload, uint8_t hops, uint32_t msg_id = 0, bool needs_ack = false);
   uint8_t parseHopsFromWirePayload(const String& wirePayload) const;
+  uint32_t parseMsgIdFromWirePayload(const String& wirePayload) const;
   String unwrapWirePayload(const String& wirePayload) const;
 
 #if defined(ESP32)
@@ -42,7 +43,9 @@ class EspNowRadioAdapter : public RadioPort {
 
   String incoming_[kMaxIncomingQueue];
   uint8_t incoming_hops_[kMaxIncomingQueue];
-  size_t incoming_count_;
+  volatile size_t incoming_count_;
+
+  volatile uint32_t acked_msg_id_;
 
   static EspNowRadioAdapter* active_instance_;
 };

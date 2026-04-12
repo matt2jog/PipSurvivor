@@ -17,8 +17,8 @@ class MockRadioAdapter : public RadioPort {
 
   explicit MockRadioAdapter(const RadioConfig& config);
 
-  bool sendMessage(const String& message, uint8_t hops) override;
-  bool sendAlert(const String& alert, uint8_t hops) override;
+  bool sendMessage(const String& message, uint8_t hops, uint32_t msg_id = 0) override;
+  bool sendAlert(const String& alert, uint8_t hops, uint32_t msg_id = 0) override;
   void poll() override;
 
   bool queueIncoming(const String& message);

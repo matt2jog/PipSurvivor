@@ -3,7 +3,7 @@
 MockRadioAdapter::MockRadioAdapter(const RadioConfig& config)
     : RadioPort(config), outbox_count_(0), incoming_count_(0) {}
 
-bool MockRadioAdapter::sendMessage(const String& message, uint8_t hops) {
+bool MockRadioAdapter::sendMessage(const String& message, uint8_t hops, uint32_t msg_id) {
   if (outbox_count_ >= kMaxPackets) {
     return false;
   }
@@ -13,7 +13,7 @@ bool MockRadioAdapter::sendMessage(const String& message, uint8_t hops) {
   return true;
 }
 
-bool MockRadioAdapter::sendAlert(const String& alert, uint8_t hops) {
+bool MockRadioAdapter::sendAlert(const String& alert, uint8_t hops, uint32_t msg_id) {
   if (outbox_count_ >= kMaxPackets) {
     return false;
   }

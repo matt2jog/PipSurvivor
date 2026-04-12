@@ -8,7 +8,7 @@ struct RadioConfig {
   String identifier;
 };
 
-typedef void (*RadioReceiveCallback)(const String& message, uint8_t hops);
+typedef void (*RadioReceiveCallback)(const String& message, uint8_t hops, uint32_t msg_id);
 
 struct MeshMessageEntry {
   uint32_t sender_uid;
@@ -23,8 +23,8 @@ class RadioPort {
   explicit RadioPort(const RadioConfig& config);
   virtual ~RadioPort() = default;
 
-  virtual bool sendMessage(const String& message, uint8_t hops) = 0;
-  virtual bool sendAlert(const String& alert, uint8_t hops) = 0;
+  virtual bool sendMessage(const String& message, uint8_t hops, uint32_t msg_id = 0) = 0;
+  virtual bool sendAlert(const String& alert, uint8_t hops, uint32_t msg_id = 0) = 0;
 
   // Called once during setup to configure the hardware/module.
   virtual bool begin() { return true; }
@@ -41,7 +41,7 @@ class RadioPort {
   }
 
  protected:
-  void notifyMessageReceived(const String& message, uint8_t hops) const;
+  void notifyMessageReceived(const String& message, uint8_t hops, uint32_t msg_id = 0) const;
 
   RadioConfig config_;
 

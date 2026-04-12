@@ -7,9 +7,9 @@ void RadioPort::setReceiveCallback(RadioReceiveCallback callback) {
   receive_callback_ = callback;
 }
 
-void RadioPort::notifyMessageReceived(const String& message, uint8_t hops) const {
+void RadioPort::notifyMessageReceived(const String& message, uint8_t hops, uint32_t msg_id) const {
   if (receive_callback_ == nullptr) {
     return;
   }
-  receive_callback_(message, hops);
+  receive_callback_(message, hops, msg_id);
 }

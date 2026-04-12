@@ -110,6 +110,10 @@ static constexpr bool kWaterSensorDigitalWetHigh = true;
 static constexpr uint16_t kWaterSensorWetThresholdRaw = 120;
 static constexpr uint16_t kWaterSensorSettleDelayMs = 12;
 
+// ESP-NOW Mesh constants
+static constexpr uint8_t kEspNowMaxRetries = 5;
+static constexpr uint32_t kEspNowRetryDelayMs = 250;
+
 // Radio hardware pins (e.g. RYLR998).
 static constexpr int8_t kRadioRxPin = 16;
 static constexpr int8_t kRadioTxPin = 17;

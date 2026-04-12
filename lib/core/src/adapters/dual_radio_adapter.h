@@ -13,8 +13,8 @@ class DualRadioAdapter : public RadioPort {
   DualRadioAdapter(RadioPort& primary, RadioPort& secondary);
 
   bool begin() override;
-  bool sendMessage(const String& message, uint8_t hops) override;
-  bool sendAlert(const String& alert, uint8_t hops) override;
+  bool sendMessage(const String& message, uint8_t hops, uint32_t msg_id = 0) override;
+  bool sendAlert(const String& alert, uint8_t hops, uint32_t msg_id = 0) override;
   void poll() override;
 
   uint32_t getDeviceUid() const override;

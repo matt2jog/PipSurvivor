@@ -167,16 +167,16 @@ bool Rylr998RadioAdapter::begin() {
   return true;
 }
 
-bool Rylr998RadioAdapter::sendMessage(const String& message, uint8_t hops) {
-  uint32_t msg = ++msg_seq_;
-  markMessageSeen(my_uid_, msg);
-  return sendRawMeshMessage("M", my_uid_, 0xFFFFFFFF, msg, hops, message);
+bool Rylr998RadioAdapter::sendMessage(const String& message, uint8_t hops, uint32_t msg_id) {
+  if (msg_id == 0) msg_id = ++msg_seq_;
+  markMessageSeen(my_uid_, msg_id);
+  return sendRawMeshMessage("M", my_uid_, 0xFFFFFFFF, msg_id, hops, message);
 }
 
-bool Rylr998RadioAdapter::sendAlert(const String& alert, uint8_t hops) {
-  uint32_t msg = ++msg_seq_;
-  markMessageSeen(my_uid_, msg);
-  return sendRawMeshMessage("A", my_uid_, 0xFFFFFFFF, msg, hops, alert);
+bool Rylr998RadioAdapter::sendAlert(const String& alert, uint8_t hops, uint32_t msg_id) {
+  if (msg_id == 0) msg_id = ++msg_seq_;
+  markMessageSeen(my_uid_, msg_id);
+  return sendRawMeshMessage("A", my_uid_, 0xFFFFFFFF, msg_id, hops, alert);
 }
 
 bool Rylr998RadioAdapter::sendRawMeshMessage(const String& type, uint32_t sender_uid, uint32_t dest_uid, uint32_t msg_id, uint8_t ttl, const String& payload) {
@@ -352,7 +352,7 @@ void Rylr998RadioAdapter::handleLine(const String& line) {
 
   // Is it for us? Add to display
   if (dest_uid == 0xFFFFFFFF || dest_uid == my_uid_) {
-    notifyMessageReceived(payload, ttl);
+    notifyMessageReceived(payload, ttl, msg_id);
   }
 
   // Should we forward?
