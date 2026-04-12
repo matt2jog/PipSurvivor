@@ -8,7 +8,7 @@ struct RadioConfig {
   String identifier;
 };
 
-typedef void (*RadioReceiveCallback)(const String& message);
+typedef void (*RadioReceiveCallback)(const String& message, uint8_t hops);
 
 struct MeshMessageEntry {
   uint32_t sender_uid;
@@ -41,7 +41,7 @@ class RadioPort {
   }
 
  protected:
-  void notifyMessageReceived(const String& message) const;
+  void notifyMessageReceived(const String& message, uint8_t hops) const;
 
   RadioConfig config_;
 

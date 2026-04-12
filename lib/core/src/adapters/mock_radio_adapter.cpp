@@ -44,7 +44,7 @@ void MockRadioAdapter::poll() {
   }
   incoming_count_--;
 
-  notifyMessageReceived(next_message);
+  notifyMessageReceived(next_message, 0);
 }
 
 size_t MockRadioAdapter::outboxCount() const {

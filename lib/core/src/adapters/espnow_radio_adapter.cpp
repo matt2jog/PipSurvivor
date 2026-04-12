@@ -25,7 +25,9 @@ bool EspNowRadioAdapter::begin() {
     return true;
   }
 
-  WiFi.mode(WIFI_STA);
+  if (WiFi.getMode() == WIFI_OFF) {
+    WiFi.mode(WIFI_STA);
+  }
 
   if (esp_now_init() != ESP_OK) {
     return false;
@@ -87,7 +89,16 @@ void EspNowRadioAdapter::poll() {
   }
   incoming_count_--;
 
-  notifyMessageReceived(next_message);
+  uint8_t hops = 0;
+  const int firstPipe = next_message.indexOf('|');
+  if (firstPipe > 0) {
+    const int secondPipe = next_message.indexOf('|', firstPipe + 1);
+    if (secondPipe > firstPipe) {
+      hops = static_cast<uint8_t>(next_message.substring(firstPipe + 1, secondPipe).toInt());
+    }
+  }
+
+  notifyMessageReceived(next_message, hops);
 }
 
 bool EspNowRadioAdapter::enqueueIncoming(const String& rawPayload) {

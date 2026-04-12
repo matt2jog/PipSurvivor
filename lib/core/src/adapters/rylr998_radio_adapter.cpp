@@ -352,7 +352,7 @@ void Rylr998RadioAdapter::handleLine(const String& line) {
 
   // Is it for us? Add to display
   if (dest_uid == 0xFFFFFFFF || dest_uid == my_uid_) {
-    notifyMessageReceived(payload);
+    notifyMessageReceived(payload, ttl);
   }
 
   // Should we forward?

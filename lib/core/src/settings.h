@@ -18,6 +18,13 @@ namespace DeviceSettings {
 // Note: radio adapter type is still selected by PIPSURVIVOR_RADIO_* build flag.
 static constexpr bool kEnableRadio = true;
 
+// Dual radio: when PIPSURVIVOR_RADIO_DUAL is defined, both RYLR998 and ESP-NOW
+// are active simultaneously via DualRadioAdapter.
+static constexpr bool kEnableRylr998Tx = true;
+static constexpr bool kEnableEspNowTx = true;
+// ESP-NOW channel (0 = auto/select current WiFi channel).
+static constexpr uint8_t kEspNowChannel = 0;
+
 // MPU6050 gyroscope for jerk/impact detection.
 static constexpr bool kEnableGyroscope = false;
 
@@ -28,7 +35,7 @@ static constexpr bool kEnableBarometer = false;
 static constexpr bool kEnableWaterSensor = false;
 
 // 4x4 matrix button panel for UI input.
-static constexpr bool kEnableButtons = false;
+static constexpr bool kEnableButtons = true;
 
 // LCD display output (set false to use serial-mirror only).
 static constexpr bool kEnableDisplay = false;

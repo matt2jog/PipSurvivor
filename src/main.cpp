@@ -6,6 +6,7 @@
 #include "adapters/alert_detection_adapter.h"
 #include "adapters/barometer_altitude_adapter.h"
 #include "adapters/bmp280_barometer_adapter.h"
+#include "adapters/dual_radio_adapter.h"
 #include "adapters/gyroscope_jerk_adapter.h"
 #include "adapters/matrix_button_panel_adapter.h"
 #include "adapters/mock_display_adapter.h"
@@ -197,9 +198,9 @@ class MainDevice {
  private:
   static MainDevice* instance_;
 
-  static void onRadioMessageStatic(const String& message) {
+  static void onRadioMessageStatic(const String& message, uint8_t hops) {
     if (instance_ != nullptr) {
-      instance_->onRadioMessage(message);
+      instance_->onRadioMessage(message, hops);
     }
   }
 
@@ -211,9 +212,10 @@ class MainDevice {
     }
   }
 
-  void onRadioMessage(const String& message) {
-    Serial.println("[RADIO_RX] " + message);
-    addFeedMessage("RX:" + message);
+  void onRadioMessage(const String& message, uint8_t hops) {
+    String display = message + " HOP:" + String(hops);
+    Serial.println("[RADIO_RX] " + display);
+    addFeedMessage("RX:" + display);
     render_dirty_ = true;
   }
 
@@ -712,12 +714,16 @@ MatrixButtonPanelAdapter g_physical_buttons(
 WebButtonAdapter g_web_buttons;
 CompositeButtonAdapter g_buttons(g_physical_buttons, g_web_buttons);
 
-#if defined(PIPSURVIVOR_RADIO_ESPNOW)
-EspNowRadioAdapter g_radio_impl(DeviceSettings::buildRadioConfig(), 0);
+#if defined(PIPSURVIVOR_RADIO_DUAL)
+  EspNowRadioAdapter g_espnow_impl(DeviceSettings::buildRadioConfig(), DeviceSettings::kEspNowChannel);
+  Rylr998RadioAdapter g_rylr998_impl(DeviceSettings::buildRadioConfig(), Serial2, DeviceSettings::kMeshBroadcastAddress, 115200);
+  DualRadioAdapter g_radio_impl(g_rylr998_impl, g_espnow_impl);
+#elif defined(PIPSURVIVOR_RADIO_ESPNOW)
+  EspNowRadioAdapter g_radio_impl(DeviceSettings::buildRadioConfig(), 0);
 #elif defined(PIPSURVIVOR_RADIO_RYLR998)
-Rylr998RadioAdapter g_radio_impl(DeviceSettings::buildRadioConfig(), Serial2, DeviceSettings::kMeshBroadcastAddress, 115200);
+  Rylr998RadioAdapter g_radio_impl(DeviceSettings::buildRadioConfig(), Serial2, DeviceSettings::kMeshBroadcastAddress, 115200);
 #else
-MockRadioAdapter g_radio_impl(DeviceSettings::buildRadioConfig());
+  MockRadioAdapter g_radio_impl(DeviceSettings::buildRadioConfig());
 #endif
 
 RadioPort& g_radio = g_radio_impl;
@@ -940,6 +946,11 @@ void handleLcd() {
 }
 
 void handleMesh() {
+  if (MainDevice::instance() == nullptr) {
+    g_web_server.send(503, "text/plain", "Device not ready");
+    return;
+  }
+
   if (xSemaphoreTake(MainDevice::instance()->radio_mutex_, pdMS_TO_TICKS(50)) == pdFALSE) {
     g_web_server.send(503, "text/plain", "Busy");
     return;
@@ -955,6 +966,15 @@ void handleMesh() {
   g_radio.getMeshStats(total_rx, cache_size, relay_jobs);
 
   uint32_t my_uid = g_radio.getDeviceUid();
+
+  bool espnow_tx = false;
+  bool rylr998_tx = false;
+#if defined(PIPSURVIVOR_RADIO_DUAL)
+  DualRadioAdapter* dual = static_cast<DualRadioAdapter*>(&g_radio);
+  espnow_tx = dual->isEspNowTxEnabled();
+  rylr998_tx = dual->isRylr998TxEnabled();
+#endif
+
   xSemaphoreGive(MainDevice::instance()->radio_mutex_);
 
   auto escape = [](String s) {
@@ -967,6 +987,10 @@ void handleMesh() {
 
   String json = "{";
   json += "\"my_uid\":\"" + String(my_uid, HEX) + "\",";
+#if defined(PIPSURVIVOR_RADIO_DUAL)
+  json += "\"espnow_tx\":" + String(espnow_tx ? "true" : "false") + ",";
+  json += "\"rylr998_tx\":" + String(rylr998_tx ? "true" : "false") + ",";
+#endif
   json += "\"messages\":[";
 
   uint32_t now = millis();
@@ -1034,7 +1058,15 @@ void setup() {
   if (DeviceSettings::kEnableBarometer)   { g_bmp.begin(); }
   if (DeviceSettings::kEnableWaterSensor) { g_water_sensor.begin(); }
 
-#if defined(PIPSURVIVOR_RADIO_ESPNOW)
+#if defined(PIPSURVIVOR_RADIO_DUAL)
+  if (DeviceSettings::kEnableRadio) {
+    Serial2.begin(115200, SERIAL_8N1, DeviceSettings::kRadioRxPin, DeviceSettings::kRadioTxPin);
+    WiFi.mode(WIFI_AP_STA);
+    g_radio_impl.begin();
+    g_radio_impl.enableEspNow(DeviceSettings::kEnableEspNowTx);
+    g_radio_impl.enableRylr998(DeviceSettings::kEnableRylr998Tx);
+  }
+#elif defined(PIPSURVIVOR_RADIO_ESPNOW)
   if (DeviceSettings::kEnableRadio) g_radio_impl.begin();
 #elif defined(PIPSURVIVOR_RADIO_RYLR998)
   if (DeviceSettings::kEnableRadio) {
