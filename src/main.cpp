@@ -185,8 +185,9 @@ class MainDevice {
       last_display_render_ms_ = now;
       render_dirty_ = false;
     }
-    xSemaphoreGiveRecursive(feed_mutex_);
   }
+
+  uint32_t getUptime() const { return millis() / 1000; }
 
  private:
   static MainDevice* instance_;
@@ -400,9 +401,11 @@ class MainDevice {
       return;
     }
 
+    const DisplayState oldState = state_;
     if (state_ == DisplayState::Error) {
       if (key == KeyInput::Ack || key == KeyInput::A) {
         acknowledgeError();
+        Serial.printf("[STATE] Error -> %d (ACK)\n", static_cast<int>(state_));
       }
       return;
     }
@@ -413,6 +416,7 @@ class MainDevice {
           state_ = DisplayState::Menu;
           return;
         }
+        // Vertical Scroll (Message cycling)
         if (key == KeyInput::Star && message_count_ > 0 && selected_message_index_ > 0) {
           selected_message_index_--;
           selected_text_offset_ = 0;
@@ -423,6 +427,7 @@ class MainDevice {
           selected_text_offset_ = 0;
           return;
         }
+        // Horizontal Scroll (Panning)
         if (key == KeyInput::B && selected_text_offset_ > 0) {
           selected_text_offset_--;
           return;
@@ -445,59 +450,85 @@ class MainDevice {
           state_ = DisplayState::Compose;
           return;
         }
+        // Consistent scroll mapping for future menu items
         return;
 
       case DisplayState::Compose:
+        if (key == KeyInput::Star || key == KeyInput::Hash) {
+          // Future: maybe scroll different draft fields
+          return;
+        }
         handleComposeKey(key);
         return;
 
       case DisplayState::Error:
         return;
     }
+    if (state_ != oldState) {
+      Serial.printf("[STATE] %d -> %d\n", static_cast<int>(oldState), static_cast<int>(state_));
+    }
   }
 
   DisplayFrame currentFrame() {
+    DisplayFrame f{"", "", "", ""};
     switch (state_) {
-      case DisplayState::Initial:
-        return buildInitialFrame(
-            message_feed_,
-            message_count_,
-            selected_message_index_,
-            selected_text_offset_,
-            display_.width());
+      case DisplayState::Initial: {
+        String content = "Inbox Empty";
+        String meta = "Up:" + String(millis()/1000) + "s";
+        if (message_count_ > 0) {
+          content = message_feed_[selected_message_index_];
+          if (selected_text_offset_ < content.length()) {
+            content = content.substring(selected_text_offset_);
+          }
+          meta = "Msg " + String(selected_message_index_ + 1) + "/" + String(message_count_);
+        }
+        f.line1 = content;
+        f.line2 = meta;
+        f.hint  = "A:Menu *#:V BC:H";
+        break;
+      }
 
       case DisplayState::Menu:
-        return buildMenuFrame(display_.width());
+        f.line1 = "[ MAIN MENU ]";
+        f.line2 = "1. COMPOSE MSG";
+        f.hint  = "A:BACK B:ENTER";
+        break;
 
       case DisplayState::Compose: {
-        size_t offset = 0;
-        if (compose_draft_.length() > display_.width()) {
-          offset = compose_draft_.length() - display_.width();
-        }
-        return buildComposeFrame(compose_draft_, offset, display_.width());
+        f.line1 = "Typing: " + compose_draft_;
+        f.line2 = "Len: " + String(compose_draft_.length()) + "/160";
+        f.hint  = "A:BCK C:SND D:BS";
+        break;
       }
 
       case DisplayState::Error:
-        return buildErrorFrame(error_message_, display_.width());
+        f.line1 = "!! ERROR !!";
+        f.line2 = error_message_;
+        f.hint  = "A:ACKNOWLEDGE";
+        break;
     }
 
-    return buildErrorFrame("invalid state", display_.width());
+    f.line3 = f.hint; // By default Line 3 is the hint row
+    return f;
   }
 
   void render() {
     const DisplayFrame frame = currentFrame();
-    if (frame.line1 == last_rendered_frame_.line1 && frame.line2 == last_rendered_frame_.line2) {
+    if (frame.line1 == last_rendered_frame_.line1 && 
+        frame.line2 == last_rendered_frame_.line2 && 
+        frame.line3 == last_rendered_frame_.line3) {
       return;
     }
 
     display_.renderFrame(frame);
     last_rendered_frame_ = frame;
 
-    // Serial mirror is useful for bring-up when using a non-physical display adapter.
-    Serial.print("[LCD] ");
+    Serial.print("[LCD] L1:");
     Serial.print(frame.line1);
-    Serial.print(" | ");
-    Serial.println(frame.line2);
+    Serial.print(" | L2:");
+    Serial.print(frame.line2);
+    Serial.print(" | L3:");
+    Serial.println(frame.line3);
   }
 
   DisplayPort& display_;
@@ -534,6 +565,8 @@ class MainDevice {
   SemaphoreHandle_t feed_mutex_;
   SemaphoreHandle_t radio_mutex_;
 };
+
+MainDevice* MainDevice::instance_ = nullptr;
 
 class WebButtonAdapter : public ButtonPanelPort {
  public:
@@ -590,7 +623,7 @@ class CompositeButtonAdapter : public ButtonPanelPort {
   ButtonPanelPort& b_;
 };
 
-MainDevice* MainDevice::instance_ = nullptr;
+
 
 MockDisplayAdapter g_display(16, 2);
 MatrixButtonPanelAdapter g_physical_buttons(
@@ -645,225 +678,124 @@ void handleRoot() {
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>PipSurvivor Receiver</title>
+  <title>PipSurvivor 16x3</title>
   <style>
     :root {
-      --bg: #0f172a;
-      --card-bg: #1e293b;
-      --text: #f8fafc;
-      --accent: #38bdf8;
-      --border: #334155;
+      --bg: #0b0f19;
+      --lcd-bg: #8bac0f;
+      --lcd-text: #0f380f;
     }
     body {
       background-color: var(--bg);
-      color: var(--text);
-      font-family: 'Inter', -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
       margin: 0;
-      padding: 2rem;
+      height: 100vh;
       display: flex;
+      flex-direction: column;
+      align-items: center;
       justify-content: center;
+      font-family: system-ui, sans-serif;
     }
-    .container {
-      max-width: 600px;
-      width: 100%;
-    }
-    h1 {
-      color: var(--accent);
-      text-align: center;
-      margin-bottom: 2rem;
-      letter-spacing: -0.05em;
-    }
-    .send-header {
-      color: var(--text);
-      text-align: center;
-      margin-bottom: 1rem;
-      font-size: 1.5rem;
-    }
-    .keypad-container {
-      background: #3c3c3c;
+    .container { width: 100%; max-width: 400px; padding: 1rem; }
+    .lcd {
+      background: #111;
       padding: 15px;
-      border-radius: 12px;
-      border: 3px solid #555;
+      border-radius: 10px;
+      border: 4px solid #333;
       margin-bottom: 2rem;
+      box-shadow: 0 10px 30px rgba(0,0,0,0.8);
     }
+    .lcd-screen {
+      background: var(--lcd-bg);
+      color: var(--lcd-text);
+      font-family: 'Courier New', monospace;
+      padding: 15px;
+      border-radius: 4px;
+      font-size: 1.6rem;
+      line-height: 1.3;
+      white-space: pre;
+      font-weight: 900;
+      box-shadow: inset 0 0 15px rgba(0,0,0,0.5);
+    }
+    .line { height: 1.8rem; overflow: hidden; }
+    .flash { animation: f 1.2s infinite; }
+    @keyframes f { 0%, 100% { opacity: 1; } 50% { opacity: 0.1; } }
     .keypad {
       display: grid;
       grid-template-columns: repeat(4, 1fr);
       gap: 12px;
+      background: #1a1a2e;
+      padding: 20px;
+      border-radius: 20px;
+      border: 4px solid #2a2a40;
     }
     .key {
       aspect-ratio: 1;
-      border: 2px solid transparent;
-      border-radius: 8px;
-      color: white;
+      border: none;
+      border-radius: 10px;
+      color: #fff;
       cursor: pointer;
       display: flex;
       flex-direction: column;
       align-items: center;
       justify-content: center;
-      transition: filter 0.1s;
-      user-select: none;
-      padding: 0;
+      box-shadow: 0 5px 0 #000;
     }
-    .key:active { filter: brightness(0.8) !important; }
-    .key.blue {
-      background: #6f8cf2;
-      border-color: #5a7add;
-    }
-    .key.red {
-      background: #d94a4a;
-      border-color: #c73939;
-    }
-    .key-main { font-size: 1.8rem; font-weight: 500; line-height: 1; margin-bottom: 4px; }
-    .key-sub { font-size: 0.7rem; opacity: 0.9; line-height: 1; min-height: 0.7rem; font-weight: normal; }
-    .messages {
-      display: flex;
-      flex-direction: column;
-      gap: 1rem;
-    }
-    .message {
-      background: var(--card-bg);
-      padding: 1.2rem;
-      border-radius: 12px;
-      border: 1px solid var(--border);
-      box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1);
-      font-size: 1.1rem;
-      line-height: 1.5;
-      animation: fadeIn 0.4s ease-out;
-    }
-    .rx-badge {
-      display: inline-block;
-      background: rgba(56, 189, 248, 0.15);
-      color: var(--accent);
-      padding: 0.2rem 0.6rem;
-      border-radius: 4px;
-      font-size: 0.8rem;
-      font-weight: 600;
-      margin-bottom: 0.5rem;
-      text-transform: uppercase;
-    }
-    .tx-badge {
-      display: inline-block;
-      background: rgba(167, 139, 250, 0.15);
-      color: #a78bfa;
-      padding: 0.2rem 0.6rem;
-      border-radius: 4px;
-      font-size: 0.8rem;
-      font-weight: 600;
-      margin-bottom: 0.5rem;
-      text-transform: uppercase;
-    }
-    .lcd-screen {
-      background: #8bac0f;
-      color: #0f380f;
-      font-family: 'Courier New', Courier, monospace;
-      padding: 12px;
-      border: 4px solid #111;
-      border-radius: 6px;
-      margin-bottom: 1rem;
-      font-size: 1.4rem;
-      line-height: 1.4;
-      white-space: pre;
-      text-align: left;
-      font-weight: bold;
-      text-shadow: 1px 1px 0px rgba(139, 172, 15, 0.4);
-      box-shadow: inset 0 0 10px rgba(0,0,0,0.5);
-    }
-    .alr-badge {
-      display: inline-block;
-      background: rgba(248, 113, 113, 0.15);
-      color: #f87171;
-      padding: 0.2rem 0.6rem;
-      border-radius: 4px;
-      font-size: 0.8rem;
-      font-weight: 600;
-      margin-bottom: 0.5rem;
-      text-transform: uppercase;
-    }
-    @keyframes fadeIn {
-      from { opacity: 0; transform: translateY(10px); }
-      to { opacity: 1; transform: translateY(0); }
-    }
-    .empty { text-align: center; color: #94a3b8; padding: 2rem; }
+    .key:active { transform: translateY(4px); box-shadow: none; }
+    .key.n { background: #313244; }
+    .key.f { background: #f38ba8; }
+    .km { font-size: 1.8rem; font-weight: 800; }
+    .ks { font-size: 0.6rem; opacity: 0.8; }
   </style>
   <script>
-    function pk(k) {
-      fetch('/key?k=' + k).catch(e => console.error(e));
-    }
-    async function updateFeed() {
-      try {
-        const r = await fetch('/feed');
-        const t = await r.text();
-        document.getElementById('msg-list').innerHTML = t;
-      } catch(e) {}
-    }
-    async function updateLcd() {
+    function pk(k) { fetch('/key?k=' + k); }
+    async function u() {
       try {
         const r = await fetch('/lcd');
-        const t = await r.text();
-        document.getElementById('lcd-screen').innerHTML = t;
+        const d = await r.json();
+        document.getElementById('l1').textContent = (d.l1 + "                ").substring(0, 16);
+        document.getElementById('l2').textContent = (d.l2 + "                ").substring(0, 16);
+        const l3 = document.getElementById('l3');
+        l3.textContent = (d.l3 + "                ").substring(0, 16);
+        l3.classList.toggle('flash', d.is_hint);
       } catch(e) {}
     }
-    setInterval(updateFeed, 3000);
-    setInterval(updateLcd, 500);
+    setInterval(u, 300);
   </script>
 </head>
 <body>
   <div class="container">
-    <h1 class="send-header">Send Message</h1>
-    <div class="keypad-container">
-      <div id="lcd-screen" class="lcd-screen">Loading...</div>
-      <div class="keypad">
-        <button class="key blue" onclick="pk('K1')"><div class="key-main">1</div><div class="key-sub">.,!?</div></button>
-        <button class="key blue" onclick="pk('K2')"><div class="key-main">2</div><div class="key-sub">ABC</div></button>
-        <button class="key blue" onclick="pk('K3')"><div class="key-main">3</div><div class="key-sub">DEF</div></button>
-        <button class="key red" onclick="pk('A')"><div class="key-main">A</div><div class="key-sub"></div></button>
-
-        <button class="key blue" onclick="pk('K4')"><div class="key-main">4</div><div class="key-sub">GHI</div></button>
-        <button class="key blue" onclick="pk('K5')"><div class="key-main">5</div><div class="key-sub">JKL</div></button>
-        <button class="key blue" onclick="pk('K6')"><div class="key-main">6</div><div class="key-sub">MNO</div></button>
-        <button class="key red" onclick="pk('B')"><div class="key-main">B</div><div class="key-sub"></div></button>
-
-        <button class="key blue" onclick="pk('K7')"><div class="key-main">7</div><div class="key-sub">PQRS</div></button>
-        <button class="key blue" onclick="pk('K8')"><div class="key-main">8</div><div class="key-sub">TUV</div></button>
-        <button class="key blue" onclick="pk('K9')"><div class="key-main">9</div><div class="key-sub">WXYZ</div></button>
-        <button class="key red" onclick="pk('C')"><div class="key-main">C</div><div class="key-sub"></div></button>
-
-        <button class="key red" onclick="pk('Star')"><div class="key-main">*</div><div class="key-sub"></div></button>
-        <button class="key blue" onclick="pk('K0')"><div class="key-main">0</div><div class="key-sub">[space]</div></button>
-        <button class="key red" onclick="pk('Hash')"><div class="key-main">#</div><div class="key-sub"></div></button>
-        <button class="key red" onclick="pk('D')"><div class="key-main">D</div><div class="key-sub"></div></button>
+    <div class="lcd">
+      <div class="lcd-screen">
+        <div id="l1" class="line"></div>
+        <div id="l2" class="line"></div>
+        <div id="l3" class="line"></div>
       </div>
     </div>
-    
-    <h1>Receiving Feed</h1>
-    <div id="msg-list" class="messages">
-)HTML";
-
-  if (g_device.getMessageCount() == 0) {
-    html += "<div class='empty'>No messages received yet.</div>";
-  } else {
-    size_t count = g_device.getMessageCount();
-    // Show up to 5 last messages correctly
-    size_t start_idx = count >= 5 ? count - 5 : 0;
-    for (int i = count - 1; i >= static_cast<int>(start_idx); --i) {
-      String msg = g_device.getMessage(i);
-      if (msg.startsWith("RX:")) {
-        msg = msg.substring(3);
-      }
-      html += "<div class='message'><div class='rx-badge'>Inbound</div>" + msg + "</div>";
-    }
-  }
-
-  html += R"(
+    <div class="keypad">
+      <button class="key n" onclick="pk('K1')"><div class="km">1</div><div class="ks">.,!?</div></button>
+      <button class="key n" onclick="pk('K2')"><div class="km">2</div><div class="ks">ABC</div></button>
+      <button class="key n" onclick="pk('K3')"><div class="km">3</div><div class="ks">DEF</div></button>
+      <button class="key f" onclick="pk('A')"><div class="km">A</div><div class="ks">MENU</div></button>
+      <button class="key n" onclick="pk('K4')"><div class="km">4</div><div class="ks">GHI</div></button>
+      <button class="key n" onclick="pk('K5')"><div class="km">5</div><div class="ks">JKL</div></button>
+      <button class="key n" onclick="pk('K6')"><div class="km">6</div><div class="ks">MNO</div></button>
+      <button class="key f" onclick="pk('B')"><div class="km">B</div><div class="ks">PREV</div></button>
+      <button class="key n" onclick="pk('K7')"><div class="km">7</div><div class="ks">PQRS</div></button>
+      <button class="key n" onclick="pk('K8')"><div class="km">8</div><div class="ks">TUV</div></button>
+      <button class="key n" onclick="pk('K9')"><div class="km">9</div><div class="ks">WXYZ</div></button>
+      <button class="key f" onclick="pk('C')"><div class="km">C</div><div class="ks">NEXT</div></button>
+      <button class="key f" onclick="pk('Star')"><div class="km">*</div><div class="ks">UP</div></button>
+      <button class="key n" onclick="pk('K0')"><div class="km">0</div><div class="ks">_</div></button>
+      <button class="key f" onclick="pk('Hash')"><div class="km">#</div><div class="ks">DWN</div></button>
+      <button class="key f" onclick="pk('D')"><div class="km">D</div><div class="ks">DEL</div></button>
     </div>
   </div>
 </body>
 </html>
-)";
-
+)HTML";
   g_web_server.send(200, "text/html", html);
 }
+
 
 void backgroundReceiverTask(void* parameter) {
   for (;;) {
@@ -902,6 +834,7 @@ void handleKeyInput() {
     else if (k == "Hash") key = KeyInput::Hash;
     
     if (key != KeyInput::None) {
+      Serial.printf("[HTTP] Key Input: %s\n", k.c_str());
       g_web_buttons.pushKey(key);
     }
   }
@@ -909,42 +842,27 @@ void handleKeyInput() {
 }
 
 void handleFeed() {
-  String partial = "";
-  if (g_device.getMessageCount() == 0) {
-    partial = "<div class='empty'>No messages received yet.</div>";
-  } else {
-    size_t count = g_device.getMessageCount();
-    size_t start_idx = count >= 5 ? count - 5 : 0;
-    for (int i = count - 1; i >= static_cast<int>(start_idx); --i) {
-      String msg = g_device.getMessage(i);
-      String badge = "System";
-      String badgeClass = "rx-badge";
-      if (msg.startsWith("RX:")) {
-        msg = msg.substring(3);
-        badge = "Inbound";
-      } else if (msg.startsWith("TX:")) {
-        msg = msg.substring(3);
-        badge = "Outbound";
-        badgeClass = "tx-badge";
-      } else if (msg.startsWith("ALR[")) {
-        badge = "Alert";
-        badgeClass = "alr-badge";
-      }
-      partial += "<div class='message'><div class='" + badgeClass + "'>" + badge + "</div>" + msg + "</div>";
-    }
-  }
-  g_web_server.send(200, "text/html", partial);
+  g_web_server.send(404, "text/plain", "Removed");
 }
 
 void handleLcd() {
   DisplayFrame frame = g_device.getLastRenderedFrame();
-  String html = frame.line1;
-  html.replace(" ", "&nbsp;");
-  html += "<br>";
-  String l2 = frame.line2;
-  l2.replace(" ", "&nbsp;");
-  html += l2;
-  g_web_server.send(200, "text/html", html);
+  
+  auto escape = [](String s) {
+    s.replace("\\", "\\\\");
+    s.replace("\"", "\\\"");
+    return s;
+  };
+
+  String json = "{";
+  json += "\"l1\":\"" + escape(frame.line1) + "\",";
+  json += "\"l2\":\"" + escape(frame.line2) + "\",";
+  json += "\"l3\":\"" + escape(frame.line3) + "\",";
+  json += "\"is_hint\":true";
+  json += "}";
+  
+  Serial.println("[HTTP] /lcd -> " + json);
+  g_web_server.send(200, "application/json", json);
 }
 
 void initWebServer() {

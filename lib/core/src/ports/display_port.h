@@ -35,6 +35,8 @@ enum class KeyInput : uint8_t {
 struct DisplayFrame {
   String line1;
   String line2;
+  String line3;
+  String hint;
 };
 
 struct TransitionResult {
