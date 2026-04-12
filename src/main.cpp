@@ -84,8 +84,11 @@ class MainDevice {
         message_count_(0),
         selected_message_index_(0),
         selected_text_offset_(0),
-        alert_queue_count_(0),
-        last_display_render_ms_(0),
+         alert_queue_count_(0),
+         alert_count_(0),
+         selected_alert_index_(0),
+         selected_alert_text_offset_(0),
+         last_display_render_ms_(0),
         last_alert_poll_ms_(0),
         last_ping_ms_(0),
         ping_count_(0),
@@ -185,6 +188,8 @@ class MainDevice {
       last_display_render_ms_ = now;
       render_dirty_ = false;
     }
+
+    xSemaphoreGiveRecursive(feed_mutex_);
   }
 
   uint32_t getUptime() const { return millis() / 1000; }
@@ -249,6 +254,7 @@ class MainDevice {
     alert_queue_count_--;
 
     addFeedMessage(alert);
+    addAlertMessage(alert);
     
     xSemaphoreTake(radio_mutex_, portMAX_DELAY);
     bool ok = radio_.sendAlert(alert, 1);
@@ -290,6 +296,25 @@ class MainDevice {
     if (message_count_ > 0) {
       selected_message_index_ = message_count_ - 1;
       selected_text_offset_ = 0;
+    }
+    xSemaphoreGiveRecursive(feed_mutex_);
+  }
+
+  void addAlertMessage(const String& message) {
+    xSemaphoreTakeRecursive(feed_mutex_, portMAX_DELAY);
+    if (alert_count_ < DeviceSettings::kMaxFeedMessages) {
+      alert_feed_[alert_count_] = message;
+      alert_count_++;
+    } else {
+      for (size_t i = 1; i < DeviceSettings::kMaxFeedMessages; ++i) {
+        alert_feed_[i - 1] = alert_feed_[i];
+      }
+      alert_feed_[DeviceSettings::kMaxFeedMessages - 1] = message;
+    }
+
+    if (alert_count_ > 0) {
+      selected_alert_index_ = alert_count_ - 1;
+      selected_alert_text_offset_ = 0;
     }
     xSemaphoreGiveRecursive(feed_mutex_);
   }
@@ -416,23 +441,21 @@ class MainDevice {
           state_ = DisplayState::Menu;
           return;
         }
-        // Vertical Scroll (Message cycling)
-        if (key == KeyInput::Star && message_count_ > 0 && selected_message_index_ > 0) {
+        if (key == KeyInput::B && message_count_ > 0 && selected_message_index_ > 0) {
           selected_message_index_--;
           selected_text_offset_ = 0;
           return;
         }
-        if (key == KeyInput::Hash && message_count_ > 0 && selected_message_index_ + 1 < message_count_) {
+        if (key == KeyInput::C && message_count_ > 0 && selected_message_index_ + 1 < message_count_) {
           selected_message_index_++;
           selected_text_offset_ = 0;
           return;
         }
-        // Horizontal Scroll (Panning)
-        if (key == KeyInput::B && selected_text_offset_ > 0) {
+        if (key == KeyInput::Star && selected_text_offset_ > 0) {
           selected_text_offset_--;
           return;
         }
-        if (key == KeyInput::C && message_count_ > 0) {
+        if (key == KeyInput::Hash && message_count_ > 0) {
           const String& msg = message_feed_[selected_message_index_];
           if (selected_text_offset_ + 1 < msg.length()) {
             selected_text_offset_++;
@@ -442,20 +465,54 @@ class MainDevice {
         return;
 
       case DisplayState::Menu:
-        if (key == KeyInput::A) {
+        if (key == KeyInput::A || key == KeyInput::Hash) {
           state_ = DisplayState::Initial;
           return;
         }
-        if (key == KeyInput::B) {
+        if (key == KeyInput::K1) {
           state_ = DisplayState::Compose;
           return;
         }
-        // Consistent scroll mapping for future menu items
+        if (key == KeyInput::K2) {
+          state_ = DisplayState::ViewAlerts;
+          return;
+        }
+        if (key == KeyInput::K3) {
+          state_ = DisplayState::Initial;
+          return;
+        }
+        return;
+
+      case DisplayState::ViewAlerts:
+        if (key == KeyInput::A) {
+          state_ = DisplayState::Menu;
+          return;
+        }
+        if (key == KeyInput::B && alert_count_ > 0 && selected_alert_index_ > 0) {
+          selected_alert_index_--;
+          selected_alert_text_offset_ = 0;
+          return;
+        }
+        if (key == KeyInput::C && alert_count_ > 0 && selected_alert_index_ + 1 < alert_count_) {
+          selected_alert_index_++;
+          selected_alert_text_offset_ = 0;
+          return;
+        }
+        if (key == KeyInput::Star && selected_alert_text_offset_ > 0) {
+          selected_alert_text_offset_--;
+          return;
+        }
+        if (key == KeyInput::Hash && alert_count_ > 0) {
+          const String& a = alert_feed_[selected_alert_index_];
+          if (selected_alert_text_offset_ + 1 < a.length()) {
+            selected_alert_text_offset_++;
+          }
+          return;
+        }
         return;
 
       case DisplayState::Compose:
         if (key == KeyInput::Star || key == KeyInput::Hash) {
-          // Future: maybe scroll different draft fields
           return;
         }
         handleComposeKey(key);
@@ -484,15 +541,31 @@ class MainDevice {
         }
         f.line1 = content;
         f.line2 = meta;
-        f.hint  = "A:Menu *#:V BC:H";
+        f.hint  = "A:Menu B:Up C:Dn";
         break;
       }
 
       case DisplayState::Menu:
-        f.line1 = "[ MAIN MENU ]";
-        f.line2 = "1. COMPOSE MSG";
-        f.hint  = "A:BACK B:ENTER";
+        f.line1 = "1) mk msg  [MM]";
+        f.line2 = "2) view alerts";
+        f.line3 = "3) view msgs";
+        return f;
+
+      case DisplayState::ViewAlerts: {
+        String content = "No Alerts";
+        String meta = "";
+        if (alert_count_ > 0) {
+          content = alert_feed_[selected_alert_index_];
+          if (selected_alert_text_offset_ < content.length()) {
+            content = content.substring(selected_alert_text_offset_);
+          }
+          meta = "Alert " + String(selected_alert_index_ + 1) + "/" + String(alert_count_);
+        }
+        f.line1 = content;
+        f.line2 = meta;
+        f.hint  = "A:Menu B:Up C:Dn";
         break;
+      }
 
       case DisplayState::Compose: {
         f.line1 = "Typing: " + compose_draft_;
@@ -508,7 +581,7 @@ class MainDevice {
         break;
     }
 
-    f.line3 = f.hint; // By default Line 3 is the hint row
+    f.line3 = f.hint;
     return f;
   }
 
@@ -553,6 +626,11 @@ class MainDevice {
 
   String alert_queue_[DeviceSettings::kMaxQueuedAlerts];
   size_t alert_queue_count_;
+
+  String alert_feed_[DeviceSettings::kMaxFeedMessages];
+  size_t alert_count_;
+  size_t selected_alert_index_;
+  size_t selected_alert_text_offset_;
 
   uint32_t last_display_render_ms_;
   uint32_t last_alert_poll_ms_;
@@ -672,6 +750,7 @@ MainDevice g_device(g_display, g_buttons, g_radio, g_alert_detection);
 WebServer g_web_server(80);
 
 void handleRoot() {
+  Serial.println("[HTTP] GET / (root page)");
   String html = R"HTML(
 <!DOCTYPE html>
 <html lang="en">
@@ -717,8 +796,6 @@ void handleRoot() {
       box-shadow: inset 0 0 15px rgba(0,0,0,0.5);
     }
     .line { height: 1.8rem; overflow: hidden; }
-    .flash { animation: f 1.2s infinite; }
-    @keyframes f { 0%, 100% { opacity: 1; } 50% { opacity: 0.1; } }
     .keypad {
       display: grid;
       grid-template-columns: repeat(4, 1fr);
@@ -754,9 +831,7 @@ void handleRoot() {
         const d = await r.json();
         document.getElementById('l1').textContent = (d.l1 + "                ").substring(0, 16);
         document.getElementById('l2').textContent = (d.l2 + "                ").substring(0, 16);
-        const l3 = document.getElementById('l3');
-        l3.textContent = (d.l3 + "                ").substring(0, 16);
-        l3.classList.toggle('flash', d.is_hint);
+        document.getElementById('l3').textContent = (d.l3 + "                ").substring(0, 16);
       } catch(e) {}
     }
     setInterval(u, 300);
@@ -779,14 +854,14 @@ void handleRoot() {
       <button class="key n" onclick="pk('K4')"><div class="km">4</div><div class="ks">GHI</div></button>
       <button class="key n" onclick="pk('K5')"><div class="km">5</div><div class="ks">JKL</div></button>
       <button class="key n" onclick="pk('K6')"><div class="km">6</div><div class="ks">MNO</div></button>
-      <button class="key f" onclick="pk('B')"><div class="km">B</div><div class="ks">PREV</div></button>
+      <button class="key f" onclick="pk('B')"><div class="km">B</div><div class="ks">UP</div></button>
       <button class="key n" onclick="pk('K7')"><div class="km">7</div><div class="ks">PQRS</div></button>
       <button class="key n" onclick="pk('K8')"><div class="km">8</div><div class="ks">TUV</div></button>
       <button class="key n" onclick="pk('K9')"><div class="km">9</div><div class="ks">WXYZ</div></button>
-      <button class="key f" onclick="pk('C')"><div class="km">C</div><div class="ks">NEXT</div></button>
-      <button class="key f" onclick="pk('Star')"><div class="km">*</div><div class="ks">UP</div></button>
+      <button class="key f" onclick="pk('C')"><div class="km">C</div><div class="ks">DOWN</div></button>
+      <button class="key f" onclick="pk('Star')"><div class="km">*</div><div class="ks">LEFT</div></button>
       <button class="key n" onclick="pk('K0')"><div class="km">0</div><div class="ks">_</div></button>
-      <button class="key f" onclick="pk('Hash')"><div class="km">#</div><div class="ks">DWN</div></button>
+      <button class="key f" onclick="pk('Hash')"><div class="km">#</div><div class="ks">RIGHT</div></button>
       <button class="key f" onclick="pk('D')"><div class="km">D</div><div class="ks">DEL</div></button>
     </div>
   </div>
@@ -857,8 +932,7 @@ void handleLcd() {
   String json = "{";
   json += "\"l1\":\"" + escape(frame.line1) + "\",";
   json += "\"l2\":\"" + escape(frame.line2) + "\",";
-  json += "\"l3\":\"" + escape(frame.line3) + "\",";
-  json += "\"is_hint\":true";
+  json += "\"l3\":\"" + escape(frame.line3) + "\"";
   json += "}";
   
   Serial.println("[HTTP] /lcd -> " + json);

@@ -37,6 +37,7 @@ static constexpr bool kEnableDisplay = false;
 static constexpr bool kEnableWebServer = true;
 static constexpr char kApSsid[] = "PipSurvivor-Node";
 static constexpr char kApPassword[] = "survivor123!";
+static constexpr int kApChannel = 1;
 
 // Alert detection subsystem (jerk + altitude + submersion).
 // Automatically skips any sensor whose kEnable* flag is false.

@@ -7,6 +7,7 @@ enum class DisplayState : uint8_t {
   Initial,
   Menu,
   Compose,
+  ViewAlerts,
   Error
 };
 
