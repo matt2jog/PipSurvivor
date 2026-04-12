@@ -33,20 +33,32 @@ class DualRadioAdapter : public RadioPort {
   struct DedupEntry {
     uint32_t hash;
     uint32_t timestamp_ms;
+    uint32_t msg_id;
   };
 
-  bool enqueueIncoming(const String& message, uint8_t hops);
-  bool isDuplicate(const String& message) const;
+  bool enqueueIncoming(const String& message, uint8_t hops, uint32_t msg_id = 0);
+  bool isDuplicate(const String& message, uint32_t msg_id = 0) const;
   uint32_t hashMessage(const String& message) const;
 
-  static void onSubAdapterMessageStatic(const String& message, uint8_t hops);
+  static void onSubAdapterMessageStatic(const String& message, uint8_t hops, uint32_t msg_id);
   static DualRadioAdapter* active_instance_;
 
   RadioPort& primary_;
   RadioPort& secondary_;
 
+  static const size_t kMaxRelayJobs = 16;
+  struct RelayJob {
+    uint32_t transmit_time_ms;
+    String message;
+    uint8_t hops_remaining;
+    uint32_t msg_id;
+  };
+  RelayJob relay_jobs_[kMaxRelayJobs];
+  size_t relay_job_count_ = 0;
+
   String incoming_[kMaxIncomingQueue];
   uint8_t incoming_hops_[kMaxIncomingQueue];
+  uint32_t incoming_msg_ids_[kMaxIncomingQueue];
   size_t incoming_count_;
 
   mutable DedupEntry dedup_cache_[kDedupCacheSize];

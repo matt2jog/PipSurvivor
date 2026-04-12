@@ -26,17 +26,19 @@ bool DualRadioAdapter::begin() {
   return primary_ok || secondary_ok;
 }
 
-bool DualRadioAdapter::sendMessage(const String& message, uint8_t hops) {
-  bool a = rylr998_tx_enabled_ ? primary_.sendMessage(message, hops) : false;
-  bool b = espnow_tx_enabled_ ? secondary_.sendMessage(message, hops) : false;
-  Serial.printf("[DUAL_RADIO] sendMessage: rylr998=%d espnow=%d\n", a, b);
+bool DualRadioAdapter::sendMessage(const String& message, uint8_t hops, uint32_t msg_id) {
+  if (msg_id == 0) msg_id = (millis() << 16) | (random(0, 0xFFFF));
+  bool a = rylr998_tx_enabled_ ? primary_.sendMessage(message, hops, msg_id) : false;
+  bool b = espnow_tx_enabled_ ? secondary_.sendMessage(message, hops, msg_id) : false;
+  Serial.printf("[DUAL_RADIO] sendMessage: msg_id=%lu rylr998=%d espnow=%d\n", (unsigned long)msg_id, a, b);
   return a || b;
 }
 
-bool DualRadioAdapter::sendAlert(const String& alert, uint8_t hops) {
-  bool a = rylr998_tx_enabled_ ? primary_.sendAlert(alert, hops) : false;
-  bool b = espnow_tx_enabled_ ? secondary_.sendAlert(alert, hops) : false;
-  Serial.printf("[DUAL_RADIO] sendAlert: rylr998=%d espnow=%d\n", a, b);
+bool DualRadioAdapter::sendAlert(const String& alert, uint8_t hops, uint32_t msg_id) {
+  if (msg_id == 0) msg_id = (millis() << 16) | (random(0, 0xFFFF));
+  bool a = rylr998_tx_enabled_ ? primary_.sendAlert(alert, hops, msg_id) : false;
+  bool b = espnow_tx_enabled_ ? secondary_.sendAlert(alert, hops, msg_id) : false;
+  Serial.printf("[DUAL_RADIO] sendAlert: msg_id=%lu rylr998=%d espnow=%d\n", (unsigned long)msg_id, a, b);
   return a || b;
 }
 
@@ -65,13 +67,40 @@ void DualRadioAdapter::poll() {
   while (incoming_count_ > 0) {
     String msg = incoming_[0];
     uint8_t hops = incoming_hops_[0];
+    uint32_t msg_id = incoming_msg_ids_[0];
     for (size_t i = 1; i < incoming_count_; ++i) {
       incoming_[i - 1] = incoming_[i];
       incoming_hops_[i - 1] = incoming_hops_[i];
+      incoming_msg_ids_[i - 1] = incoming_msg_ids_[i];
     }
     incoming_count_--;
 
-    notifyMessageReceived(msg, hops);
+    notifyMessageReceived(msg, hops, msg_id);
+    
+    // Relay if there are still hops remaining!
+    if (hops > 1 && msg_id != 0) {
+      if (relay_job_count_ < kMaxRelayJobs) {
+        relay_jobs_[relay_job_count_++] = {
+          (uint32_t)(millis() + random(100, 1500)), // Jitter
+          msg,
+          (uint8_t)(hops - 1),
+          msg_id
+        };
+      }
+    }
+  }
+
+  uint32_t now = millis();
+  for (size_t i = 0; i < relay_job_count_; ) {
+    if (now >= relay_jobs_[i].transmit_time_ms) {
+      sendMessage(relay_jobs_[i].message, relay_jobs_[i].hops_remaining, relay_jobs_[i].msg_id);
+      for (size_t j = i + 1; j < relay_job_count_; ++j) {
+        relay_jobs_[j - 1] = relay_jobs_[j];
+      }
+      relay_job_count_--;
+    } else {
+      i++;
+    }
   }
 }
 
@@ -87,15 +116,15 @@ void DualRadioAdapter::getMeshStats(uint32_t& total_rx, size_t& cache_size, size
   primary_.getMeshStats(total_rx, cache_size, relay_jobs);
 }
 
-void DualRadioAdapter::onSubAdapterMessageStatic(const String& message, uint8_t hops) {
+void DualRadioAdapter::onSubAdapterMessageStatic(const String& message, uint8_t hops, uint32_t msg_id) {
   if (active_instance_ != nullptr) {
-    active_instance_->enqueueIncoming(message, hops);
+    active_instance_->enqueueIncoming(message, hops, msg_id);
   }
 }
 
-bool DualRadioAdapter::enqueueIncoming(const String& message, uint8_t hops) {
-  if (isDuplicate(message)) {
-    Serial.printf("[DUAL_RADIO] dedup drop: \"%s\"\n", message.c_str());
+bool DualRadioAdapter::enqueueIncoming(const String& message, uint8_t hops, uint32_t msg_id) {
+  if (isDuplicate(message, msg_id)) {
+    Serial.printf("[DUAL_RADIO] dedup drop: \"%s\" msg_id=%lu\n", message.c_str(), (unsigned long)msg_id);
     return false;
   }
 
@@ -105,20 +134,22 @@ bool DualRadioAdapter::enqueueIncoming(const String& message, uint8_t hops) {
   }
 
   uint32_t h = hashMessage(message);
-  dedup_cache_[dedup_index_] = DedupEntry{h, millis()};
+  dedup_cache_[dedup_index_] = DedupEntry{h, millis(), msg_id};
   dedup_index_ = (dedup_index_ + 1) % kDedupCacheSize;
 
   incoming_[incoming_count_] = message;
   incoming_hops_[incoming_count_] = hops;
+  incoming_msg_ids_[incoming_count_] = msg_id;
   incoming_count_++;
   return true;
 }
 
-bool DualRadioAdapter::isDuplicate(const String& message) const {
+bool DualRadioAdapter::isDuplicate(const String& message, uint32_t msg_id) const {
   uint32_t h = hashMessage(message);
   uint32_t now = millis();
   for (size_t i = 0; i < kDedupCacheSize; ++i) {
-    if (dedup_cache_[i].hash == h && (now - dedup_cache_[i].timestamp_ms) < 5000) {
+    if ((dedup_cache_[i].hash == h || (msg_id != 0 && dedup_cache_[i].msg_id == msg_id))
+        && (now - dedup_cache_[i].timestamp_ms) < 5000) {
       return true;
     }
   }

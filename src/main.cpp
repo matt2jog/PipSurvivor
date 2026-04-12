@@ -198,9 +198,9 @@ class MainDevice {
  private:
   static MainDevice* instance_;
 
-  static void onRadioMessageStatic(const String& message, uint8_t hops) {
+  static void onRadioMessageStatic(const String& message, uint8_t hops, uint32_t msg_id) {
     if (instance_ != nullptr) {
-      instance_->onRadioMessage(message, hops);
+      instance_->onRadioMessage(message, hops, msg_id);
     }
   }
 
@@ -212,7 +212,7 @@ class MainDevice {
     }
   }
 
-  void onRadioMessage(const String& message, uint8_t hops) {
+  void onRadioMessage(const String& message, uint8_t hops, uint32_t msg_id) {
     String display = message + " HOP:" + String(hops);
     Serial.println("[RADIO_RX] " + display);
     addFeedMessage("RX:" + display);
