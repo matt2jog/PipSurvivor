@@ -100,6 +100,7 @@ class MainDevice {
         pending_char_index_(0),
         pending_char_pos_(-1),
         pending_updated_ms_(0),
+        tx_status_hint_(""),
         render_dirty_(true),
         last_rendered_frame_(DisplayFrame{"", ""}) {
     feed_mutex_ = xSemaphoreCreateRecursiveMutex();
@@ -289,12 +290,15 @@ class MainDevice {
     
     Serial.println("[ALERT_TX] " + alert);
 
+    // Release feed mutex while waiting on radio retries so /lcd stays responsive.
+    xSemaphoreGiveRecursive(feed_mutex_);
     xSemaphoreTake(radio_mutex_, portMAX_DELAY);
     bool ok = radio_.sendAlert(alert, DeviceSettings::kMeshMaxHops);
     xSemaphoreGive(radio_mutex_);
+    xSemaphoreTakeRecursive(feed_mutex_, portMAX_DELAY);
     
     if (!ok) {
-      enterError("alert send fail");
+      enterError("No peer ACK (alert)");
     }
   }
 
@@ -436,12 +440,21 @@ class MainDevice {
         return;
       }
 
+      tx_status_hint_ = "looking 4 peers...";
+      render_dirty_ = true;
+      render();
+
+      // Keep web/LCD polling active while ACK retries are in flight.
+      xSemaphoreGiveRecursive(feed_mutex_);
       xSemaphoreTake(radio_mutex_, portMAX_DELAY);
       bool ok = radio_.sendMessage(compose_draft_, DeviceSettings::kMeshMaxHops);
       xSemaphoreGive(radio_mutex_);
+      xSemaphoreTakeRecursive(feed_mutex_, portMAX_DELAY);
+
+      tx_status_hint_ = "";
 
       if (!ok) {
-        enterError("msg send fail");
+        enterError("No ACK from peers");
         return;
       }
 
@@ -603,7 +616,11 @@ class MainDevice {
       case DisplayState::Compose: {
         f.line1 = "Typing: " + compose_draft_;
         f.line2 = "Len: " + String(compose_draft_.length()) + "/160";
-        f.hint  = "A:BCK C:SND D:BS";
+        if (tx_status_hint_.length() > 0) {
+          f.hint = tx_status_hint_;
+        } else {
+          f.hint = "A:BCK C:SND D:BS";
+        }
         break;
       }
 
@@ -656,6 +673,7 @@ class MainDevice {
   uint8_t pending_char_index_;
   int32_t pending_char_pos_;
   uint32_t pending_updated_ms_;
+  String tx_status_hint_;
 
   String alert_queue_[DeviceSettings::kMaxQueuedAlerts];
   size_t alert_queue_count_;
@@ -913,15 +931,18 @@ void handleRoot() {
 
 void backgroundReceiverTask(void* parameter) {
   for (;;) {
-    if (DeviceSettings::kEnableRadio && MainDevice::instance() != nullptr) {
-      xSemaphoreTake(MainDevice::instance()->radio_mutex_, portMAX_DELAY);
-      g_radio.poll();
-      xSemaphoreGive(MainDevice::instance()->radio_mutex_);
-    }
-
     if (DeviceSettings::kEnableWebServer) {
       g_web_server.handleClient();
     }
+
+    if (DeviceSettings::kEnableRadio && MainDevice::instance() != nullptr) {
+      // Never block web servicing on radio mutex while foreground send retries are running.
+      if (xSemaphoreTake(MainDevice::instance()->radio_mutex_, 0) == pdTRUE) {
+        g_radio.poll();
+        xSemaphoreGive(MainDevice::instance()->radio_mutex_);
+      }
+    }
+
     vTaskDelay(pdMS_TO_TICKS(10));
   }
 }

@@ -172,17 +172,45 @@ void DualRadioAdapter::processRelayJobs() {
 }
 
 bool DualRadioAdapter::sendMessage(const String& message, uint8_t hops, uint32_t msg_id) {
-  bool a = rylr998_tx_enabled_ ? primary_.sendMessage(message, hops, msg_id) : false;
-  bool b = espnow_tx_enabled_ ? secondary_.sendMessage(message, hops, msg_id) : false;
-  Serial.printf("[DUAL_RADIO] sendMessage: rylr998=%d espnow=%d\n", a, b);
-  return a || b;
+  bool b = false;
+  bool a = false;
+
+  if (espnow_tx_enabled_) {
+    b = secondary_.sendMessage(message, hops, msg_id);
+    if (b) {
+      Serial.printf("[DUAL_RADIO] sendMessage: rylr998=%d espnow=%d result=1\n", a, b);
+      return true;
+    }
+  }
+
+  if (rylr998_tx_enabled_) {
+    a = primary_.sendMessage(message, hops, msg_id);
+  }
+
+  bool result = a || b;
+  Serial.printf("[DUAL_RADIO] sendMessage: rylr998=%d espnow=%d result=%d\n", a, b, result);
+  return result;
 }
 
 bool DualRadioAdapter::sendAlert(const String& alert, uint8_t hops, uint32_t msg_id) {
-  bool a = rylr998_tx_enabled_ ? primary_.sendAlert(alert, hops, msg_id) : false;
-  bool b = espnow_tx_enabled_ ? secondary_.sendAlert(alert, hops, msg_id) : false;
-  Serial.printf("[DUAL_RADIO] sendAlert: rylr998=%d espnow=%d\n", a, b);
-  return a || b;
+  bool b = false;
+  bool a = false;
+
+  if (espnow_tx_enabled_) {
+    b = secondary_.sendAlert(alert, hops, msg_id);
+    if (b) {
+      Serial.printf("[DUAL_RADIO] sendAlert: rylr998=%d espnow=%d result=1\n", a, b);
+      return true;
+    }
+  }
+
+  if (rylr998_tx_enabled_) {
+    a = primary_.sendAlert(alert, hops, msg_id);
+  }
+
+  bool result = a || b;
+  Serial.printf("[DUAL_RADIO] sendAlert: rylr998=%d espnow=%d result=%d\n", a, b, result);
+  return result;
 }
 
 bool DualRadioAdapter::enqueueIncoming(const String& message, uint8_t hops, uint32_t msg_id) {

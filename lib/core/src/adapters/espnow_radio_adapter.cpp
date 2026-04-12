@@ -86,31 +86,34 @@ bool EspNowRadioAdapter::sendWirePayload(char type, const String& payload, uint8
   }
 
   const String wire_payload = buildWirePayload(type, msg_id, hops, payload);
-  int max_retries = needs_ack ? DeviceSettings::kEspNowMaxRetries : 1;
-  uint32_t retry_delay_ms = DeviceSettings::kEspNowRetryDelayMs;
+  if (!needs_ack) {
+    esp_err_t send_result = esp_now_send(
+        broadcast_peer_, reinterpret_cast<const uint8_t*>(wire_payload.c_str()), wire_payload.length());
+    return send_result == ESP_OK;
+  }
 
-  for (int attempt = 0; attempt < max_retries; ++attempt) {
+  acked_msg_id_ = 0;
+  const uint32_t retry_ms = DeviceSettings::kMeshAckRetryMs;
+  const uint32_t max_retry_timer_ms = DeviceSettings::kMeshAckMaxRetryTimerMs;
+  const uint32_t window_start = millis();
+
+  while ((millis() - window_start) < max_retry_timer_ms) {
     esp_err_t send_result = esp_now_send(
         broadcast_peer_, reinterpret_cast<const uint8_t*>(wire_payload.c_str()), wire_payload.length());
 
-    if (send_result != ESP_OK) {
-      delay(retry_delay_ms);
-      continue;
-    }
-
-    if (!needs_ack) {
-      return true;
-    }
-
-    // Wait for ACK
-    uint32_t start_time = millis();
-    while (millis() - start_time < retry_delay_ms) {
-      if (acked_msg_id_ == msg_id) {
-        return true;  // ACK received successfully
+    if (send_result == ESP_OK) {
+      const uint32_t wait_start = millis();
+      while ((millis() - wait_start) < retry_ms && (millis() - window_start) < max_retry_timer_ms) {
+        if (acked_msg_id_ == msg_id) {
+          return true;
+        }
+        delay(10);
       }
+    } else {
       delay(10);
     }
   }
+
   return false;
 #endif
 }
