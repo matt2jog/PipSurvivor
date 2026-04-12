@@ -28,7 +28,7 @@ static constexpr bool kEnableBarometer = false;
 static constexpr bool kEnableWaterSensor = false;
 
 // 4x4 matrix button panel for UI input.
-static constexpr bool kEnableButtons = true;
+static constexpr bool kEnableButtons = false;
 
 // LCD display output (set false to use serial-mirror only).
 static constexpr bool kEnableDisplay = false;
@@ -59,8 +59,9 @@ static constexpr size_t kMeshCacheSize = 50;
 static constexpr uint32_t kMeshJitterMinMs = 100;
 static constexpr uint32_t kMeshJitterMaxMs = 500;
 static constexpr uint32_t kMeshAckTimeoutMs = 2000;
-static constexpr uint8_t kMeshMaxRetries = 3;
-static constexpr uint16_t kMeshBroadcastAddress = 0; // RYLR998 broadcast
+  static constexpr uint8_t kMeshMaxRetries = 3;
+  static constexpr uint16_t kMeshBroadcastAddress = 0; // RYLR998 broadcast
+  static constexpr size_t kMeshHistorySize = 20;
 
 
 // Number of message entries retained in the on-device inbox/feed.

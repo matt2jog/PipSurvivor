@@ -257,7 +257,7 @@ class MainDevice {
     addAlertMessage(alert);
     
     xSemaphoreTake(radio_mutex_, portMAX_DELAY);
-    bool ok = radio_.sendAlert(alert, 1);
+    bool ok = radio_.sendAlert(alert, DeviceSettings::kMeshMaxHops);
     xSemaphoreGive(radio_mutex_);
     
     if (!ok) {
@@ -404,7 +404,7 @@ class MainDevice {
       }
 
       xSemaphoreTake(radio_mutex_, portMAX_DELAY);
-      bool ok = radio_.sendMessage(compose_draft_, 1);
+      bool ok = radio_.sendMessage(compose_draft_, DeviceSettings::kMeshMaxHops);
       xSemaphoreGive(radio_mutex_);
 
       if (!ok) {
@@ -939,6 +939,55 @@ void handleLcd() {
   g_web_server.send(200, "application/json", json);
 }
 
+void handleMesh() {
+  if (xSemaphoreTake(MainDevice::instance()->radio_mutex_, pdMS_TO_TICKS(50)) == pdFALSE) {
+    g_web_server.send(503, "text/plain", "Busy");
+    return;
+  }
+
+  MeshMessageEntry entries[DeviceSettings::kMeshHistorySize];
+  size_t count = 0;
+  uint32_t total_rx = 0;
+  size_t cache_size = 0;
+  size_t relay_jobs = 0;
+
+  g_radio.getRecentMessages(entries, DeviceSettings::kMeshHistorySize, count);
+  g_radio.getMeshStats(total_rx, cache_size, relay_jobs);
+
+  uint32_t my_uid = g_radio.getDeviceUid();
+  xSemaphoreGive(MainDevice::instance()->radio_mutex_);
+
+  auto escape = [](String s) {
+    s.replace("\\", "\\\\");
+    s.replace("\"", "\\\"");
+    s.replace("\n", "\\n");
+    s.replace("\r", "\\r");
+    return s;
+  };
+
+  String json = "{";
+  json += "\"my_uid\":\"" + String(my_uid, HEX) + "\",";
+  json += "\"messages\":[";
+
+  uint32_t now = millis();
+  for (size_t i = 0; i < count; i++) {
+    if (i > 0) json += ",";
+    json += "{\"sender\":\"" + String(entries[i].sender_uid, HEX) + "\",";
+    json += "\"msg_id\":" + String(entries[i].msg_id) + ",";
+    json += "\"ttl\":" + String(entries[i].ttl) + ",";
+    json += "\"payload\":\"" + escape(entries[i].payload) + "\",";
+    json += "\"age_ms\":" + String(now - entries[i].recv_time_ms) + "}";
+  }
+
+  json += "],\"stats\":{";
+  json += "\"total_rx\":" + String(total_rx) + ",";
+  json += "\"cache_size\":" + String(cache_size) + ",";
+  json += "\"relay_jobs\":" + String(relay_jobs) + "}}";
+
+  Serial.println("[HTTP] /mesh -> " + json);
+  g_web_server.send(200, "application/json", json);
+}
+
 void initWebServer() {
   if (!DeviceSettings::kEnableWebServer) return;
 
@@ -955,6 +1004,7 @@ void initWebServer() {
   g_web_server.on("/key", handleKeyInput);
   g_web_server.on("/feed", handleFeed);
   g_web_server.on("/lcd", handleLcd);
+  g_web_server.on("/mesh", handleMesh);
   g_web_server.begin();
   Serial.print("[WIFI] AP started. Root IP: ");
   Serial.println(WiFi.softAPIP());

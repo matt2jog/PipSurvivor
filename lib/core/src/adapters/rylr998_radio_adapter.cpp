@@ -20,7 +20,10 @@ Rylr998RadioAdapter::Rylr998RadioAdapter(
       initialized_(false),
       my_uid_(0),
       msg_seq_(0),
-      cache_index_(0) {
+      cache_index_(0),
+      history_count_(0),
+      history_head_(0),
+      total_rx_(0) {
   memset(line_buffer_, 0, sizeof(line_buffer_));
   
   for (size_t i = 0; i < DeviceSettings::kMeshCacheSize; ++i) {
@@ -62,20 +65,104 @@ bool Rylr998RadioAdapter::begin() {
   }
   
   setupUid();
-  serial_.begin(115200); // Ensure serial is ready here if not already
+  serial_.begin(115200);
 
+  delay(500);
+  while (serial_.available()) serial_.read();
+
+  Serial.println("[RADIO] Init: resetting...");
+  serial_.println("AT+RESET");
+  delay(300);
+  while (serial_.available()) {
+    Serial.print("[RADIO] reset resp: ");
+    Serial.println(serial_.readString());
+  }
+
+  Serial.println("[RADIO] Setting BAND...");
   serial_.println("AT+BAND=" + String(DeviceSettings::kRadioBand));
-  delay(50);
+  delay(300);
+  {
+    String resp;
+    while (serial_.available()) resp += (char)serial_.read();
+    Serial.print("[RADIO] BAND resp: ");
+    Serial.println(resp.length() ? resp : "(none)");
+  }
+
+  Serial.println("[RADIO] Setting NETWORKID...");
   serial_.println("AT+NETWORKID=" + String(DeviceSettings::kRadioNetworkId));
-  delay(50);
+  delay(300);
+  {
+    String resp;
+    while (serial_.available()) resp += (char)serial_.read();
+    Serial.print("[RADIO] NETWORKID resp: ");
+    Serial.println(resp.length() ? resp : "(none)");
+  }
+
+  Serial.println("[RADIO] Setting PARAMETER...");
   serial_.println("AT+PARAMETER=" + String(DeviceSettings::kRadioSf) + "," +
                   String(DeviceSettings::kRadioCr) + "," +
                   String(DeviceSettings::kRadioBw) + "," +
                   String(DeviceSettings::kRadioPreamble));
-  delay(50);
+  delay(300);
+  {
+    String resp;
+    while (serial_.available()) resp += (char)serial_.read();
+    Serial.print("[RADIO] PARAMETER resp: ");
+    Serial.println(resp.length() ? resp : "(none)");
+  }
+
+  Serial.println("[RADIO] Setting ADDRESS...");
   serial_.println("AT+ADDRESS=" + String(DeviceSettings::kRadioNodeAddress));
   delay(500);
+  {
+    String resp;
+    while (serial_.available()) resp += (char)serial_.read();
+    Serial.print("[RADIO] ADDRESS resp: ");
+    Serial.println(resp.length() ? resp : "(none)");
+  }
 
+  Serial.printf("[RADIO] UID=%08X\n", my_uid_);
+
+  Serial.println("[RADIO] Verifying settings...");
+  delay(200);
+
+  serial_.println("AT+BAND?");
+  delay(200);
+  {
+    String resp;
+    while (serial_.available()) resp += (char)serial_.read();
+    Serial.print("[RADIO] BAND? -> ");
+    Serial.println(resp.length() ? resp : "(none)");
+  }
+
+  serial_.println("AT+NETWORKID?");
+  delay(200);
+  {
+    String resp;
+    while (serial_.available()) resp += (char)serial_.read();
+    Serial.print("[RADIO] NETWORKID? -> ");
+    Serial.println(resp.length() ? resp : "(none)");
+  }
+
+  serial_.println("AT+ADDRESS?");
+  delay(200);
+  {
+    String resp;
+    while (serial_.available()) resp += (char)serial_.read();
+    Serial.print("[RADIO] ADDRESS? -> ");
+    Serial.println(resp.length() ? resp : "(none)");
+  }
+
+  serial_.println("AT+PARAMETER?");
+  delay(200);
+  {
+    String resp;
+    while (serial_.available()) resp += (char)serial_.read();
+    Serial.print("[RADIO] PARAMETER? -> ");
+    Serial.println(resp.length() ? resp : "(none)");
+  }
+
+  Serial.println("[RADIO] Init complete.");
   initialized_ = true;
   return true;
 }
@@ -127,6 +214,8 @@ void Rylr998RadioAdapter::scheduleRelay(const String& type, uint32_t sender_uid,
       relay_jobs_[i].msg_id = msg_id;
       relay_jobs_[i].ttl = ttl;
       relay_jobs_[i].payload = payload;
+      Serial.printf("[MESH] RELAY ttl=%d msg=%lu delay=%lums\n",
+          ttl, (unsigned long)msg_id, (unsigned long)(relay_jobs_[i].fire_time_ms - millis()));
       break;
     }
   }
@@ -145,6 +234,8 @@ void Rylr998RadioAdapter::processRelayJobs() {
   for (size_t i = 0; i < 5; ++i) {
     if (relay_jobs_[i].active && now >= relay_jobs_[i].fire_time_ms) {
       relay_jobs_[i].active = false;
+      Serial.printf("[MESH] RELAY-fire ttl=%d msg=%lu\n",
+          relay_jobs_[i].ttl, (unsigned long)relay_jobs_[i].msg_id);
       sendRawMeshMessage(
           relay_jobs_[i].type == "M" ? "R" : relay_jobs_[i].type, // Turn M into R for relay, leave A as is
           relay_jobs_[i].sender_uid,
@@ -164,6 +255,13 @@ void Rylr998RadioAdapter::sendDirectedAck(uint32_t dest_uid, uint32_t msg_id) {
 void Rylr998RadioAdapter::poll() {
   processRelayJobs();
 
+  static uint32_t last_debug_ms = 0;
+  const uint32_t now = millis();
+  if (now - last_debug_ms > 5000) {
+    Serial.printf("[RADIO] poll: serial.available=%d\n", serial_.available());
+    last_debug_ms = now;
+  }
+
   while (serial_.available() > 0) {
     const char ch = static_cast<char>(serial_.read());
 
@@ -174,6 +272,7 @@ void Rylr998RadioAdapter::poll() {
     if (ch == '\n') {
       if (line_length_ > 0) {
         line_buffer_[line_length_] = '\0';
+        Serial.printf("[RADIO] raw line: %s\n", line_buffer_);
         handleLine(String(line_buffer_));
         line_length_ = 0;
       }
@@ -240,6 +339,17 @@ void Rylr998RadioAdapter::handleLine(const String& line) {
 
   markMessageSeen(sender_uid, msg_id);
 
+  message_history_[history_head_].payload.clear();
+  message_history_[history_head_] = MeshMessageEntry{
+    sender_uid, msg_id, ttl, payload, millis()
+  };
+  history_head_ = (history_head_ + 1) % DeviceSettings::kMeshHistorySize;
+  if (history_count_ < DeviceSettings::kMeshHistorySize) history_count_++;
+  total_rx_++;
+
+  Serial.printf("[MESH] RX from=%08X ttl=%d msg=%lu \"%s\"\n",
+      sender_uid, ttl, (unsigned long)msg_id, payload.c_str());
+
   // Is it for us? Add to display
   if (dest_uid == 0xFFFFFFFF || dest_uid == my_uid_) {
     notifyMessageReceived(payload);
@@ -253,5 +363,25 @@ void Rylr998RadioAdapter::handleLine(const String& line) {
   // ARQ end-to-end ACK explicit reply
   if (dest_uid == my_uid_ && type_str != "K") {
     sendDirectedAck(sender_uid, msg_id);
+  }
+}
+
+void Rylr998RadioAdapter::getRecentMessages(MeshMessageEntry* out, size_t max, size_t& count) {
+  count = history_count_ < max ? history_count_ : max;
+  for (size_t i = 0; i < count; ++i) {
+    size_t src = (history_head_ + DeviceSettings::kMeshHistorySize - history_count_ + i) % DeviceSettings::kMeshHistorySize;
+    out[i] = message_history_[src];
+  }
+}
+
+void Rylr998RadioAdapter::getMeshStats(uint32_t& total_rx, size_t& cache_size, size_t& relay_jobs) const {
+  total_rx = total_rx_;
+  cache_size = 0;
+  for (size_t i = 0; i < DeviceSettings::kMeshCacheSize; ++i) {
+    if (cache_[i].sender_uid != 0 || cache_[i].msg_id != 0) cache_size++;
+  }
+  relay_jobs = 0;
+  for (size_t i = 0; i < 5; ++i) {
+    if (relay_jobs_[i].active) relay_jobs++;
   }
 }

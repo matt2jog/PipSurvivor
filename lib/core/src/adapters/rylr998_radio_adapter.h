@@ -4,6 +4,7 @@
 #include <Arduino.h>
 
 #include "../ports/radio_port.h"
+#include "../settings.h"
 
 class Rylr998RadioAdapter : public RadioPort {
  public:
@@ -21,7 +22,9 @@ class Rylr998RadioAdapter : public RadioPort {
   bool sendAlert(const String& alert, uint8_t hops) override;
   void poll() override;
 
-  uint32_t getDeviceUid() const;
+  uint32_t getDeviceUid() const override;
+  void getRecentMessages(MeshMessageEntry* out, size_t max, size_t& count) override;
+  void getMeshStats(uint32_t& total_rx, size_t& cache_size, size_t& relay_jobs) const override;
 
  private:
   struct MessageCacheItem {
@@ -56,6 +59,11 @@ class Rylr998RadioAdapter : public RadioPort {
   size_t cache_index_;
 
   RelayJob relay_jobs_[5]; // Simple queue for pending relays
+
+  MeshMessageEntry message_history_[DeviceSettings::kMeshHistorySize];
+  size_t history_count_;
+  size_t history_head_;
+  uint32_t total_rx_;
   
   void setupUid();
   bool isMessageSeen(uint32_t sender_uid, uint32_t msg_id);
