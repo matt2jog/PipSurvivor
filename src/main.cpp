@@ -27,20 +27,6 @@
 
 namespace {
 
-const char* metricName(AlertSensorMetric metric) {
-  switch (metric) {
-    case AlertSensorMetric::JerkMagnitude:
-      return "jerk";
-    case AlertSensorMetric::Submersion:
-      return "submerged";
-    case AlertSensorMetric::FallRapid:
-      return "fall";
-    case AlertSensorMetric::OrientationFlip:
-      return "flip";
-  }
-  return "metric";
-}
-
 bool isNumericKey(KeyInput key) {
   return key >= KeyInput::K0 && key <= KeyInput::K9;
 }
@@ -244,19 +230,26 @@ class MainDevice {
     String alert_group;
     switch (event.metric) {
       case AlertSensorMetric::JerkMagnitude:
+        alert_group = "STRUCK";
+        break;
       case AlertSensorMetric::FallRapid:
+        alert_group = "FALLING";
+        break;
       case AlertSensorMetric::OrientationFlip:
-        alert_group = "PHYSICAL_SHOCK";
+        alert_group = "FALLEN";
         break;
       case AlertSensorMetric::Submersion:
-        alert_group = "ENV_DANGER";
+        alert_group = "DROWNING";
         break;
       default:
-        alert_group = "ALERT";
+        alert_group = "HELP";
     }
 
-    String payload = alert_group + ":" + metricName(event.metric)
-        + "=" + String(event.observed_value, 2);
+    const String device_id = DeviceSettings::buildRadioConfig().identifier;
+    const float fake_lat = static_cast<float>(random(-9000000L, 9000001L)) / 100000.0f;
+    const float fake_lng = static_cast<float>(random(-18000000L, 18000001L)) / 100000.0f;
+    String payload = alert_group + ": person=" + device_id + "@ ("
+      + String(fake_lat, 5) + "," + String(fake_lng, 5) + ")";
     Serial.println("[ALERT] " + payload);
     enqueueAlert(payload);
   }
