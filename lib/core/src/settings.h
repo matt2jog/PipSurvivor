@@ -26,19 +26,19 @@ static constexpr bool kEnableEspNowTx = true;
 static constexpr uint8_t kEspNowChannel = 0;
 
 // MPU6050 gyroscope for jerk/impact detection.
-static constexpr bool kEnableGyroscope = false;
+static constexpr bool kEnableGyroscope = true;
 
 // BMP280 barometer for altitude change detection.
-static constexpr bool kEnableBarometer = false;
+static constexpr bool kEnableBarometer = true;
 
 // Analog/digital water level sensor for submersion detection.
-static constexpr bool kEnableWaterSensor = false;
+static constexpr bool kEnableWaterSensor = true;
 
 // 4x4 matrix button panel for UI input.
 static constexpr bool kEnableButtons = true;
 
 // LCD display output (set false to use serial-mirror only).
-static constexpr bool kEnableDisplay = false;
+static constexpr bool kEnableDisplay = true;
 
 // Web server / hotspot output (typically used on receiver).
 static constexpr bool kEnableWebServer = true;
@@ -138,19 +138,33 @@ inline SubmersionDetectionConfig buildSubmersionConfig() {
   return cfg;
 }
 
-// Alert acceptance policy for jerk, altitude delta, and submersion constraints.
+// Individual alert type enable flags.
+static constexpr bool kEnableJerkAlert = true;
+static constexpr bool kEnableSubmersionAlert = true;
+static constexpr bool kEnableFallAlert = true;
+static constexpr bool kEnableOrientationAlert = true;
+
 inline AlertDetectionMetaParams buildAlertMetaParams() {
-  AlertDetectionMetaParams params = AlertDetectionMetaParams{
-      true,
-      18.0f,
-      true,
-      1.2f,
-      true,
-      false,
-      4000,
-      0.4f,
-      0.1f,
-  };
+  AlertDetectionMetaParams params{};
+  params.enable_jerk_check = kEnableJerkAlert;
+  params.max_jerk_magnitude = 18.0f;
+
+  params.enable_submersion_check = kEnableSubmersionAlert;
+  params.min_submersion_normalized = 0.25f;
+  params.min_submersion_duration_ms = 4000;
+
+  params.enable_fall_check = kEnableFallAlert;
+  params.max_fall_speed_m_s = 2.0f;
+  params.fall_window_ms = 3000;
+
+  params.enable_orientation_check = kEnableOrientationAlert;
+  params.max_orientation_change_rad_s = 3.0f;
+
+  params.duplicate_suppress_ms = 4000;
+  params.duplicate_jerk_epsilon = 0.4f;
+  params.duplicate_submersion_epsilon = 0.1f;
+  params.duplicate_fall_epsilon = 0.5f;
+  params.duplicate_orientation_epsilon = 0.5f;
   return params;
 }
 

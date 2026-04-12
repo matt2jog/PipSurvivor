@@ -12,6 +12,7 @@
 #include "adapters/mock_display_adapter.h"
 #include "adapters/mock_radio_adapter.h"
 #include "adapters/espnow_radio_adapter.h"
+#include "adapters/mpu6050_accel_adapter.h"
 #include "adapters/mpu6050_gyroscope_adapter.h"
 #include "adapters/rylr998_radio_adapter.h"
 #include "adapters/tzt_water_level_adapter.h"
@@ -30,10 +31,12 @@ const char* metricName(AlertSensorMetric metric) {
   switch (metric) {
     case AlertSensorMetric::JerkMagnitude:
       return "jerk";
-    case AlertSensorMetric::DeltaAltitude:
-      return "dAlt";
     case AlertSensorMetric::Submersion:
       return "submerged";
+    case AlertSensorMetric::FallRapid:
+      return "fall";
+    case AlertSensorMetric::OrientationFlip:
+      return "flip";
   }
   return "metric";
 }
@@ -162,6 +165,21 @@ class MainDevice {
         AlertDetectionReading reading{};
         alert_detection_.poll(reading);
         last_alert_poll_ms_ = now;
+
+        const AlertDetectionReading& s = alert_detection_.latestReading();
+        Serial.print("[SENSOR] jerk=");
+        Serial.print(s.has_jerk ? s.jerk_magnitude : -1.0f, 2);
+        Serial.print(" alt_drop=not_tracked");
+        Serial.print(" subm=");
+        Serial.print(s.has_submersion ? (s.is_submerged ? "YES" : "NO") : "-");
+        Serial.print(" norm=");
+        Serial.print(s.submersion_normalized, 3);
+        Serial.print(" dur=");
+        Serial.print(s.submersion_duration_ms);
+        Serial.print(" accel=");
+        Serial.print(s.has_accel ? s.accel_magnitude : -1.0f, 2);
+        Serial.print(" flat=");
+        Serial.println(s.is_flat ? "YES" : "NO");
       }
     }
 
@@ -222,12 +240,23 @@ class MainDevice {
   void onAlert(
       const AlertDetectionEvent& event,
       const AlertDetectionCallbackParams& callbackParams) {
-    String payload = "ALR[";
-    payload += callbackParams.source;
-    payload += "] ";
-    payload += metricName(event.metric);
-    payload += "=";
-    payload += String(event.observed_value, 2);
+    String alert_group;
+    switch (event.metric) {
+      case AlertSensorMetric::JerkMagnitude:
+      case AlertSensorMetric::FallRapid:
+      case AlertSensorMetric::OrientationFlip:
+        alert_group = "PHYSICAL_SHOCK";
+        break;
+      case AlertSensorMetric::Submersion:
+        alert_group = "ENV_DANGER";
+        break;
+      default:
+        alert_group = "ALERT";
+    }
+
+    String payload = alert_group + ":" + metricName(event.metric)
+        + "=" + String(event.observed_value, 2);
+    Serial.println("[ALERT] " + payload);
     enqueueAlert(payload);
   }
 
@@ -258,6 +287,8 @@ class MainDevice {
     addFeedMessage(alert);
     addAlertMessage(alert);
     
+    Serial.println("[ALERT_TX] " + alert);
+
     xSemaphoreTake(radio_mutex_, portMAX_DELAY);
     bool ok = radio_.sendAlert(alert, DeviceSettings::kMeshMaxHops);
     xSemaphoreGive(radio_mutex_);
@@ -729,6 +760,7 @@ CompositeButtonAdapter g_buttons(g_physical_buttons, g_web_buttons);
 RadioPort& g_radio = g_radio_impl;
 
 Mpu6050GyroscopeAdapter g_gyro;
+Mpu6050AccelAdapter g_accel;
 GyroscopeJerkAdapter g_jerk(g_gyro);
 
 Bmp280BarometerAdapter g_bmp;
@@ -749,6 +781,7 @@ AlertDetectionAdapter g_alert_detection(
   g_jerk,
   g_altitude,
   g_submersion,
+  g_accel,
   DeviceSettings::buildAlertMetaParams());
 
 MainDevice g_device(g_display, g_buttons, g_radio, g_alert_detection);
@@ -1054,7 +1087,7 @@ void setup() {
   }
 
   // Initialize individual sensors guarded by their enable flags.
-  if (DeviceSettings::kEnableGyroscope)   { g_gyro.begin(); }
+  if (DeviceSettings::kEnableGyroscope)   { g_gyro.begin(); g_accel.begin(); }
   if (DeviceSettings::kEnableBarometer)   { g_bmp.begin(); }
   if (DeviceSettings::kEnableWaterSensor) { g_water_sensor.begin(); }
 

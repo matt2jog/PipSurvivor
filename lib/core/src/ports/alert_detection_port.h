@@ -5,42 +5,50 @@
 
 enum class AlertSensorMetric : uint8_t {
   JerkMagnitude,
-  DeltaAltitude,
-  Submersion
+  Submersion,
+  FallRapid,
+  OrientationFlip
 };
 
 struct AlertDetectionReading {
   bool has_jerk;
   float jerk_magnitude;
 
-  bool has_delta_altitude;
-  float delta_altitude_m;
-
   bool has_submersion;
   bool is_submerged;
+  float submersion_normalized;
+  uint32_t submersion_duration_ms;
+
+  bool has_accel;
+  float accel_magnitude;
+  bool is_flat;
 
   uint32_t timestamp_ms;
 };
 
 struct AlertDetectionMetaParams {
-  // Sensor acceptance limits.
   bool enable_jerk_check;
   float max_jerk_magnitude;
 
-  bool enable_delta_altitude_check;
-  float max_abs_delta_altitude_m;
-
   bool enable_submersion_check;
-  bool allow_submersion;
+  float min_submersion_normalized;
+  uint32_t min_submersion_duration_ms;
 
-  // Duplicate-alert handling controls.
+  bool enable_fall_check;
+  float max_fall_speed_m_s;
+  uint32_t fall_window_ms;
+
+  bool enable_orientation_check;
+  float max_orientation_change_rad_s;
+
   uint32_t duplicate_suppress_ms;
   float duplicate_jerk_epsilon;
-  float duplicate_delta_altitude_epsilon_m;
+  float duplicate_submersion_epsilon;
+  float duplicate_fall_epsilon;
+  float duplicate_orientation_epsilon;
 };
 
 struct AlertDetectionCallbackParams {
-  // Optional metadata passed to callback for routing/formatting.
   String source;
   String channel;
   uint8_t severity;
@@ -65,6 +73,7 @@ class AlertDetectionPort {
 
   virtual bool begin() = 0;
   virtual bool poll(AlertDetectionReading& reading) = 0;
+  virtual const AlertDetectionReading& latestReading() const = 0;
 
   void setMetaParams(const AlertDetectionMetaParams& params);
   const AlertDetectionMetaParams& metaParams() const;
