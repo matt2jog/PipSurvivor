@@ -1,0 +1,1 @@
+no ack received over long distance -> crashed one machine (random) (then cant see network)

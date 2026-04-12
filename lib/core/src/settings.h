@@ -26,13 +26,13 @@ static constexpr bool kEnableEspNowTx = true;
 static constexpr uint8_t kEspNowChannel = 0;
 
 // MPU6050 gyroscope for jerk/impact detection.
-static constexpr bool kEnableGyroscope = true;
+static constexpr bool kEnableGyroscope = false;
 
 // BMP280 barometer for altitude change detection.
-static constexpr bool kEnableBarometer = true;
+static constexpr bool kEnableBarometer = false;
 
 // Analog/digital water level sensor for submersion detection.
-static constexpr bool kEnableWaterSensor = true;
+static constexpr bool kEnableWaterSensor = false;
 
 // 4x4 matrix button panel for UI input.
 static constexpr bool kEnableButtons = true;
@@ -65,7 +65,7 @@ static constexpr uint8_t kMeshMaxHops = 7;
 static constexpr size_t kMeshCacheSize = 50;
 static constexpr uint32_t kMeshJitterMinMs = 100;
 static constexpr uint32_t kMeshJitterMaxMs = 500;
-static constexpr uint32_t kMeshAckMaxRetryTimerMs = 2000;
+static constexpr uint32_t kMeshAckMaxRetryTimerMs = 3600000;
 static constexpr uint32_t kMeshAckRetryMs = 250;
 static constexpr uint16_t kMeshBroadcastAddress = 0; // RYLR998 broadcast
 static constexpr size_t kMeshHistorySize = 20;
