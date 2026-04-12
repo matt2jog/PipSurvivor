@@ -200,12 +200,12 @@ void DualRadioAdapter::processRelayJobs() {
       if (relay_jobs_[i].source_radio == &primary_) {
         if (espnow_tx_enabled_) {
           Serial.printf("[DUAL_RADIO] RELAY RYLR->ESPNOW msg=%08X\n", relay_jobs_[i].msg_id);
-          secondary_.sendMessage(relay_jobs_[i].payload, relay_jobs_[i].ttl, relay_jobs_[i].msg_id);
+          secondary_.relayMessage(relay_jobs_[i].payload, relay_jobs_[i].ttl, relay_jobs_[i].msg_id);
         }
       } else {
         if (rylr998_tx_enabled_) {
           Serial.printf("[DUAL_RADIO] RELAY ESPNOW->RYLR msg=%08X\n", relay_jobs_[i].msg_id);
-          primary_.sendMessage(relay_jobs_[i].payload, relay_jobs_[i].ttl, relay_jobs_[i].msg_id);
+          primary_.relayMessage(relay_jobs_[i].payload, relay_jobs_[i].ttl, relay_jobs_[i].msg_id);
         }
       }
     }

@@ -216,7 +216,11 @@ class MainDevice {
   }
 
   void onRadioMessage(const String& message, uint8_t hops) {
-    String display = message + " HOP:" + String(hops);
+    uint8_t hops_taken = 0;
+    if (hops <= DeviceSettings::kMeshMaxHops) {
+      hops_taken = DeviceSettings::kMeshMaxHops - hops;
+    }
+    String display = message + " HOP:" + String(hops_taken);
     Serial.println("[RADIO_RX] " + display);
     addFeedMessage("RX:" + display);
     render_dirty_ = true;

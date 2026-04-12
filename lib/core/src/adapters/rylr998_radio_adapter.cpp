@@ -181,6 +181,12 @@ bool Rylr998RadioAdapter::sendAlert(const String& alert, uint8_t hops, uint32_t 
   return sendWithAck("A", msg_id, hops, alert);
 }
 
+bool Rylr998RadioAdapter::relayMessage(const String& message, uint8_t hops, uint32_t msg_id) {
+  if (msg_id == 0) msg_id = ++msg_seq_;
+  markMessageSeen(my_uid_, msg_id);
+  return sendRawMeshMessage("R", my_uid_, 0xFFFFFFFF, msg_id, hops, message);
+}
+
 bool Rylr998RadioAdapter::sendWithAck(const String& type, uint32_t msg_id, uint8_t hops, const String& payload) {
   acked_msg_id_ = 0;
   const uint32_t retry_ms = DeviceSettings::kMeshAckRetryMs;

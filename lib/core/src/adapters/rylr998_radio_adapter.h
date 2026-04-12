@@ -20,6 +20,7 @@ class Rylr998RadioAdapter : public RadioPort {
 
   bool sendMessage(const String& message, uint8_t hops, uint32_t msg_id = 0) override;
   bool sendAlert(const String& alert, uint8_t hops, uint32_t msg_id = 0) override;
+  bool relayMessage(const String& message, uint8_t hops, uint32_t msg_id = 0) override;
   void poll() override;
   void acknowledgeMessage(uint32_t msg_id) override;
   void setSendWaitCallback(RadioSendWaitCallback callback) override;

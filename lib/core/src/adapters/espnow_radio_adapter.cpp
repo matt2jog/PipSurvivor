@@ -83,6 +83,12 @@ bool EspNowRadioAdapter::sendAlert(const String& alert, uint8_t hops, uint32_t m
   return sendWirePayload('A', alert, hops, msg_id, true);
 }
 
+bool EspNowRadioAdapter::relayMessage(const String& message, uint8_t hops, uint32_t msg_id) {
+  if (msg_id == 0) msg_id = esp_random();
+  markMessageSeen(msg_id);
+  return sendWirePayload('M', message, hops, msg_id, false);
+}
+
 bool EspNowRadioAdapter::sendWirePayload(char type, const String& payload, uint8_t hops, uint32_t msg_id, bool needs_ack) {
 #if !defined(ESP32)
   (void)type;

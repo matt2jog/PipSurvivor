@@ -27,6 +27,9 @@ class RadioPort {
 
   virtual bool sendMessage(const String& message, uint8_t hops, uint32_t msg_id = 0) = 0;
   virtual bool sendAlert(const String& alert, uint8_t hops, uint32_t msg_id = 0) = 0;
+  virtual bool relayMessage(const String& message, uint8_t hops, uint32_t msg_id = 0) {
+    return sendMessage(message, hops, msg_id);
+  }
 
   // Called once during setup to configure the hardware/module.
   virtual bool begin() { return true; }
