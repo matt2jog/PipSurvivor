@@ -5,6 +5,7 @@ namespace {
 const uint8_t kRegPowerMgmt1 = 0x6B;
 const uint8_t kRegConfig = 0x1A;
 const uint8_t kRegGyroConfig = 0x1B;
+const uint8_t kRegIntPinCfg = 0x37;
 const uint8_t kRegGyroXoutH = 0x43;
 
 const float kGyroScaleLsbPerDps = 131.0f;  // +/-250 deg/s
@@ -27,7 +28,13 @@ Mpu6050GyroscopeAdapter::Mpu6050GyroscopeAdapter(TwoWire& wire, uint8_t address)
 bool Mpu6050GyroscopeAdapter::begin() {
   wire_.begin();
 
+  // Wake up MPU
   if (!writeRegister(kRegPowerMgmt1, 0x00)) {
+    return false;
+  }
+
+  // Enable I2C Bypass for auxiliary sensors (like BMP280 on XDA/XCL)
+  if (!writeRegister(kRegIntPinCfg, 0x02)) {
     return false;
   }
 

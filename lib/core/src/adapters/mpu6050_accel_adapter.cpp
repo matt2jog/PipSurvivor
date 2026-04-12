@@ -5,6 +5,7 @@ namespace {
 const uint8_t kRegPowerMgmt1 = 0x6B;
 const uint8_t kRegConfig = 0x1A;
 const uint8_t kRegAccelConfig = 0x1C;
+const uint8_t kRegIntPinCfg = 0x37;
 const uint8_t kRegAccelXoutH = 0x3B;
 
 const float kGravityMps2 = 9.80665f;
@@ -27,6 +28,11 @@ bool Mpu6050AccelAdapter::begin() {
   wire_.begin();
 
   if (!writeRegister(kRegPowerMgmt1, 0x00)) {
+    return false;
+  }
+
+  // Enable I2C Bypass for auxiliary sensors (like BMP280 on XDA/XCL)
+  if (!writeRegister(kRegIntPinCfg, 0x02)) {
     return false;
   }
 
