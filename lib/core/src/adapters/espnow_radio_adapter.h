@@ -27,6 +27,26 @@ class EspNowRadioAdapter : public RadioPort {
   uint8_t parseHopsFromWirePayload(const String& wirePayload) const;
   uint32_t parseMsgIdFromWirePayload(const String& wirePayload) const;
   String unwrapWirePayload(const String& wirePayload) const;
+  uint32_t hashMessage(const String& message) const;
+
+  struct MessageCacheItem {
+    uint32_t msg_id;
+    uint32_t timestamp_ms;
+  };
+
+  struct RelayJob {
+    bool active;
+    uint32_t fire_time_ms;
+    char type;
+    uint32_t msg_id;
+    uint8_t ttl;
+    String payload;
+  };
+
+  bool isMessageSeen(uint32_t msg_id);
+  void markMessageSeen(uint32_t msg_id);
+  void scheduleRelay(char type, uint32_t msg_id, uint8_t ttl, const String& payload);
+  void processRelayJobs();
 
 #if defined(ESP32)
 #if defined(ESP_ARDUINO_VERSION_MAJOR) && ESP_ARDUINO_VERSION_MAJOR >= 3
@@ -46,6 +66,11 @@ class EspNowRadioAdapter : public RadioPort {
   volatile size_t incoming_count_;
 
   volatile uint32_t acked_msg_id_;
+
+  MessageCacheItem cache_[32];
+  size_t cache_index_;
+
+  RelayJob relay_jobs_[5];
 
   static EspNowRadioAdapter* active_instance_;
 };

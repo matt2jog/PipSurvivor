@@ -18,7 +18,11 @@ EspNowRadioAdapter::EspNowRadioAdapter(const RadioConfig& config, uint8_t channe
       channel_(channel),
       broadcast_peer_{0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF},
       incoming_count_(0),
-      acked_msg_id_(0) {}
+      acked_msg_id_(0),
+      cache_index_(0) {
+  memset(cache_, 0, sizeof(cache_));
+  for (size_t i = 0; i < 5; ++i) relay_jobs_[i].active = false;
+}
 
 bool EspNowRadioAdapter::begin() {
 #if !defined(ESP32)
@@ -58,11 +62,13 @@ bool EspNowRadioAdapter::begin() {
 bool EspNowRadioAdapter::sendMessage(const String& message, uint8_t hops, uint32_t msg_id) {
   // Use provided msg_id or generate a random one
   if (msg_id == 0) msg_id = esp_random();
+  markMessageSeen(msg_id);
   return sendWirePayload('M', message, hops, msg_id, true);
 }
 
 bool EspNowRadioAdapter::sendAlert(const String& alert, uint8_t hops, uint32_t msg_id) {
   if (msg_id == 0) msg_id = esp_random();
+  markMessageSeen(msg_id);
   return sendWirePayload('A', alert, hops, msg_id, true);
 }
 
@@ -110,6 +116,8 @@ bool EspNowRadioAdapter::sendWirePayload(char type, const String& payload, uint8
 }
 
 void EspNowRadioAdapter::poll() {
+  processRelayJobs();
+
   if (incoming_count_ == 0) {
     return;
   }
@@ -125,6 +133,55 @@ void EspNowRadioAdapter::poll() {
   String msg = unwrapWirePayload(raw);
   uint32_t msg_id = parseMsgIdFromWirePayload(raw);
   notifyMessageReceived(msg, hops, msg_id);
+}
+
+bool EspNowRadioAdapter::isMessageSeen(uint32_t msg_id) {
+  for (size_t i = 0; i < 32; ++i) {
+    if (cache_[i].msg_id == msg_id) return true;
+  }
+  return false;
+}
+
+void EspNowRadioAdapter::markMessageSeen(uint32_t msg_id) {
+  cache_[cache_index_].msg_id = msg_id;
+  cache_[cache_index_].timestamp_ms = millis();
+  cache_index_ = (cache_index_ + 1) % 32;
+}
+
+void EspNowRadioAdapter::scheduleRelay(char type, uint32_t msg_id, uint8_t ttl, const String& payload) {
+  for (size_t i = 0; i < 5; ++i) {
+    if (!relay_jobs_[i].active) {
+      relay_jobs_[i].active = true;
+      uint32_t jitter = random(100, 501);
+      relay_jobs_[i].fire_time_ms = millis() + jitter;
+      relay_jobs_[i].type = type;
+      relay_jobs_[i].msg_id = msg_id;
+      relay_jobs_[i].ttl = ttl;
+      relay_jobs_[i].payload = payload;
+      Serial.printf("[ESPNOW_MESH] RELAY msg=%08X ttl=%d delay=%lums\n", msg_id, ttl, (unsigned long)jitter);
+      break;
+    }
+  }
+}
+
+void EspNowRadioAdapter::processRelayJobs() {
+  uint32_t now = millis();
+  for (size_t i = 0; i < 5; ++i) {
+    if (relay_jobs_[i].active && now >= relay_jobs_[i].fire_time_ms) {
+      relay_jobs_[i].active = false;
+      Serial.printf("[ESPNOW_MESH] RELAY-fire msg=%08X ttl=%d\n", relay_jobs_[i].msg_id, relay_jobs_[i].ttl);
+      sendWirePayload(relay_jobs_[i].type, relay_jobs_[i].payload, relay_jobs_[i].ttl, relay_jobs_[i].msg_id, false);
+    }
+  }
+}
+
+uint32_t EspNowRadioAdapter::hashMessage(const String& message) const {
+  uint32_t h = 2166136261UL;
+  for (unsigned int i = 0; i < message.length(); ++i) {
+    h ^= static_cast<uint8_t>(message[i]);
+    h *= 16777619UL;
+  }
+  return h;
 }
 
 bool EspNowRadioAdapter::enqueueIncoming(const String& rawPayload, uint8_t hops) {
@@ -211,11 +268,24 @@ void EspNowRadioAdapter::onReceive(const uint8_t* data, int len) {
 
   // Not an ACK message, so we must ACK it and enqueue for our application
   uint32_t msg_id = parseMsgIdFromWirePayload(rawPayload);
+  
+  if (isMessageSeen(msg_id)) {
+    return;
+  }
+  markMessageSeen(msg_id);
+
   if (msg_id != 0) {
     sendWirePayload('K', "", 0, msg_id, false);  // Send ACK back
   }
 
   uint8_t hops = parseHopsFromWirePayload(rawPayload);
+  Serial.printf("[ESPNOW_MESH] RX msg=%08X hops=%d\n", msg_id, hops);
+
   enqueueIncoming(rawPayload, hops);
+
+  // If we have hops left, schedule relay
+  if (hops > 0) {
+    scheduleRelay(type, msg_id, hops - 1, unwrapWirePayload(rawPayload));
+  }
 }
 #endif

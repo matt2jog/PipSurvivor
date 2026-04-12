@@ -198,7 +198,7 @@ class MainDevice {
  private:
   static MainDevice* instance_;
 
-  static void onRadioMessageStatic(const String& message, uint8_t hops) {
+  static void onRadioMessageStatic(const String& message, uint8_t hops, uint32_t msg_id) {
     if (instance_ != nullptr) {
       instance_->onRadioMessage(message, hops);
     }

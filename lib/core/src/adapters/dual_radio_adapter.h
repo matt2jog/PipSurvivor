@@ -31,15 +31,29 @@ class DualRadioAdapter : public RadioPort {
 
  private:
   struct DedupEntry {
-    uint32_t hash;
+    uint32_t msg_id;
     uint32_t timestamp_ms;
   };
 
-  bool enqueueIncoming(const String& message, uint8_t hops);
-  bool isDuplicate(const String& message) const;
+  struct RelayJob {
+    bool active;
+    uint32_t fire_time_ms;
+    RadioPort* source_radio; // The radio we received it on
+    uint32_t msg_id;
+    uint8_t ttl;
+    String payload;
+  };
+
+  void scheduleCrossRelay(RadioPort* source, uint32_t msg_id, uint8_t ttl, const String& payload);
+  void processRelayJobs();
+
+  bool enqueueIncoming(const String& message, uint8_t hops, uint32_t msg_id);
+  bool enqueueIncomingWithSource(RadioPort* source, const String& message, uint8_t hops, uint32_t msg_id);
+  bool isDuplicate(uint32_t msg_id) const;
   uint32_t hashMessage(const String& message) const;
 
-  static void onSubAdapterMessageStatic(const String& message, uint8_t hops);
+  static void onPrimaryMessageStatic(const String& message, uint8_t hops, uint32_t msg_id);
+  static void onSecondaryMessageStatic(const String& message, uint8_t hops, uint32_t msg_id);
   static DualRadioAdapter* active_instance_;
 
   RadioPort& primary_;
@@ -47,10 +61,14 @@ class DualRadioAdapter : public RadioPort {
 
   String incoming_[kMaxIncomingQueue];
   uint8_t incoming_hops_[kMaxIncomingQueue];
+  uint32_t incoming_msg_ids_[kMaxIncomingQueue];
   size_t incoming_count_;
 
   mutable DedupEntry dedup_cache_[kDedupCacheSize];
   mutable size_t dedup_index_;
+
+  RelayJob relay_jobs_[5];
+  size_t relay_count_;
 
   bool espnow_tx_enabled_;
   bool rylr998_tx_enabled_;
