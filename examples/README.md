@@ -1,89 +1,76 @@
-# ESP32 Sensor Test Suite
+# ESP32 hardware examples
 
-This folder contains standalone Arduino sketches to smoke-test each sensor path on ESP32.
+These programs exercise individual PipSurvivor adapters on an ESP32. They are hardware smoke tests, not automated unit tests, and meaningful runtime verification requires the listed devices to be connected.
 
-## Included Tests
+## Programs
 
-- `mpu6050_accel_test`: Reads linear acceleration and derived jerk from `Mpu6050AccelAdapter`.
-- `mpu6050_gyro_jerk_test`: Reads angular velocity and derived angular jerk from `Mpu6050GyroscopeAdapter` + `GyroscopeJerkAdapter`.
-- `bmp280_altitude_test`: Reads temperature/pressure/altitude from `Bmp280BarometerAdapter` and vertical speed via `BarometerAltitudeAdapter`.
-- `tzt_water_level_test`: Reads raw/normalized water level and wet status from `TztWaterLevelAdapter`.
-- `tzt_submersion_test`: Uses `WaterLevelSubmersionAdapter` to decide if the probe is considered submerged with time/sample debouncing.
-- `alert_detection_test`: Joins jerk, delta-altitude, and submersion into `AlertDetectionAdapter` and emits de-duplicated alerts via callback.
+| Directory | Entry point | Behavior | Current PlatformIO environment |
+|---|---|---|---|
+| `bmp280_altitude_test` | `bmp280_altitude_test.cpp` | Prints BMP280 temperature, pressure, altitude, and altitude-derived vertical speed. | `test_barometer` |
+| `sensor_combo_test` | `sensor_combo_test.cpp` | Initializes the MPU6050 accelerometer and gyroscope, BMP280, and water-level adapter, then prints sensor readings. | `test_sensor_combo` |
+| `uart_radio_detect` | `main.cpp` | Checks UART loopback and sends `AT` to a RYLR998 on `Serial2`. | `test_uart` |
+| `mpu6050_accel_test` | `mpu6050_accel_test.ino` | Prints acceleration and acceleration-derived jerk. | Configured as `test_mpu6050_accel`, but the current external `.ino` source layout produces `Nothing to build`. |
+| `mpu6050_gyro_jerk_test` | `mpu6050_gyro_jerk_test.ino` | Prints angular velocity and its time derivative in rad/s². | None. |
+| `tzt_water_level_test` | `tzt_water_level_test.ino` | Prints raw/normalized water level and wet state. | Configured as `test_tzt_water_level`, but the current external `.ino` source layout produces `Nothing to build`. |
+| `tzt_submersion_test` | `tzt_submersion_test.ino` | Applies threshold, hysteresis, time, and consecutive-sample gates to water readings. | Configured as `test_tzt_submersion`, but the current external `.ino` source layout produces `Nothing to build`. |
+| `alert_detection_test` | `alert_detection_test.ino` | Combines gyroscope-derived angular acceleration, altitude change, and submersion into callback alerts with duplicate suppression. | Configured as `test_alert_detection`, but the current external `.ino` source layout produces `Nothing to build`. |
 
-## Prerequisites
+## PlatformIO builds
 
-1. ESP32 board package installed in Arduino IDE.
-2. Library Manager dependency:
-   - `Adafruit BMP280 Library` (for BMP280 test).
-3. Hardware connected to ESP32:
-   - MPU6050 on I2C (`SDA=21`, `SCL=22` by default on many ESP32 boards)
-   - BMP280 on I2C (`SDA=21`, `SCL=22`)
-   - TZT Water Level sensor signal to ADC pin (default in test: GPIO34)
+From the repository root, the `.cpp` examples can be compiled with:
 
-## Wiring Notes
+```bash
+pio run -e test_barometer
+pio run -e test_sensor_combo
+pio run -e test_uart
+```
 
-### MPU6050
+Upload a selected environment to a connected compatible board by adding `-t upload`, for example:
 
-- `VCC -> 3.3V`
-- `GND -> GND`
-- `SDA -> GPIO21`
-- `SCL -> GPIO22`
+```bash
+pio run -e test_barometer -t upload
+```
 
-### BMP280
+Open the serial monitor at the configured 115200 baud:
 
-- `VCC -> 3.3V`
-- `GND -> GND`
-- `SDA -> GPIO21`
-- `SCL -> GPIO22`
+```bash
+pio device monitor -b 115200
+```
 
-### TZT Water Level Sensor
+The `.ino` files are outside PlatformIO's normal `src` layout. The corresponding environments in `platformio.ini` do not currently compile them. To run one, first place or convert it into a valid PlatformIO source layout while preserving access to `lib/core/src`; simply invoking the configured environment is not sufficient.
 
-- `S/SIG -> GPIO34` (ADC input)
-- `+ -> 3.3V` or power-gated digital pin
-- `- -> GND`
-- Optional: route `+` through a digital GPIO for pulse-powering (to reduce corrosion)
+Although the `.ino` sketches include PipSurvivor `.cpp` implementation files directly, their `ports/...` and `adapters/...` includes still require `lib/core/src` on the compiler include path. Opening a sketch directly in Arduino IDE without packaging/copying that local library tree will not resolve those includes.
 
-## How To Run
+## Dependencies
 
-1. Open one test sketch folder in Arduino IDE.
-2. Select your ESP32 board and COM port.
-3. Verify and Upload.
-4. Open Serial Monitor at `115200` baud.
+`platformio.ini` resolves these libraries for PlatformIO builds:
 
-## Test Sketch Paths
+- Adafruit BMP280 Library
+- Adafruit Unified Sensor
+- Adafruit MPU6050
 
-- `tests/mpu6050_accel_test/mpu6050_accel_test.ino`
-- `tests/mpu6050_gyro_jerk_test/mpu6050_gyro_jerk_test.ino`
-- `tests/bmp280_altitude_test/bmp280_altitude_test.ino`
-- `tests/tzt_water_level_test/tzt_water_level_test.ino`
-- `tests/tzt_submersion_test/tzt_submersion_test.ino`
-- `tests/alert_detection_test/alert_detection_test.ino`
+Equivalent libraries and the ESP32 Arduino core are required if an example is moved to another build system.
 
-## Notes
+## Pins used by the examples
 
-- These are hardware smoke tests, not host-side unit tests.
-- Each sketch includes required adapter/port `.cpp` files directly to keep tests self-contained.
-- Keep MPU6050 still for a few seconds at startup so calibration offsets are stable.
-- For BMP280 altitude quality, adjust sea-level pressure in the test sketch for your location.
+| Device | Pins |
+|---|---|
+| MPU6050 I2C | SDA `21`, SCL `22` |
+| BMP280 I2C | SDA `21`, SCL `22`; the barometer-only example uses address `0x76` |
+| Water-level analog output | GPIO `34` |
+| RYLR998 UART diagnostic | ESP32 RX `16`, TX `17` |
 
-## Submersion Tuning Notes
+Confirm voltage, logic-level, and power requirements against the module and board documentation before wiring. The examples use 115200 baud for Serial output.
 
-`tzt_submersion_test` uses decoupled detection meta-parameters:
+## Submersion configuration demonstrated
 
-- `enter_threshold_normalized`: level needed to start considering submerged.
-- `exit_threshold_normalized`: lower level required to exit submerged state.
-- `min_submersion_time_ms`: minimum stable wet time before transition to submerged.
-- `min_dry_time_ms`: minimum stable dry time before transition to dry.
-- `min_consecutive_samples`: minimum uninterrupted samples of the candidate state.
-- `evidence_mode`: selects whether normalized level, wet flag, both, or either are used.
+`tzt_submersion_test` constructs `WaterLevelSubmersionAdapter` with:
 
-This gives a robust state transition for noisy ADC signals and intermittent droplets.
+- Enter threshold: normalized value `0.25`
+- Exit threshold: normalized value `0.15`
+- Minimum wet interval: 1200 ms
+- Minimum dry interval: 800 ms
+- Minimum consecutive samples: 3
+- Evidence mode: `Either` (normalized threshold or wet flag)
 
-## Alert Detection Notes
-
-`alert_detection_test` demonstrates:
-
-- Decoupled acceptance meta-parameters for jerk, delta altitude, and submersion.
-- Callback-based alert dispatch (`AlertDetectionCallback`) with predefined callback params (`source`, `channel`, `severity`).
-- Duplicate suppression cache to avoid repeated alerts for near-identical out-of-range values.
+These are demonstration settings, not validated drowning or water-ingress safety thresholds.
