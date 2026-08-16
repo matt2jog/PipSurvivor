@@ -72,70 +72,83 @@ In real-world disasters:
 PipSurvivor is engineered strictly following **Hexagonal Architecture (Clean Architecture / Ports & Adapters)**. The core application logic does not know or care whether an altitude reading comes from a physical BMP280 over I2C or a synthetic mock test harness.
 
 ```mermaid
-graph TD
-    subgraph "External World / Hardware"
-        HW_MPU[MPU6050 IMU]
-        HW_BMP[BMP280 Barometer]
-        HW_WATER[TZT Water Sensor]
-        HW_KEYPAD[4x4 Matrix Keypad]
-        HW_LCD[2x16 LCD Display]
-        HW_LORA[RYLR998 LoRa UART]
-        HW_ESPNOW[ESP-NOW Radio]
-        HW_PHONE[Smartphone Browser]
+flowchart TD
+    subgraph HW["External Hardware & Sensors"]
+        HW_MPU["MPU6050 6-DOF IMU"]
+        HW_BMP["BMP280 Barometer"]
+        HW_WATER["TZT Water Level Sensor"]
+        HW_KEYPAD["4x4 Matrix Keypad"]
+        HW_LCD["2x16 LCD Display"]
+        HW_LORA["RYLR998 LoRa UART"]
+        HW_ESPNOW["ESP-NOW Radio"]
+        HW_PHONE["Smartphone Browser"]
     end
 
-    subgraph "Adapters Layer (Hardware & Virtual)"
-        A_Gyro[Mpu6050GyroscopeAdapter]
-        A_Accel[Mpu6050AccelAdapter]
-        A_Jerk[GyroscopeJerkAdapter]
-        A_Baro[Bmp280BarometerAdapter]
-        A_Alt[BarometerAltitudeAdapter]
-        A_Water[TztWaterLevelAdapter]
-        A_Sub[WaterLevelSubmersionAdapter]
-        A_Alert[AlertDetectionAdapter]
-        A_Keys[MatrixButtonPanelAdapter]
-        A_WebKeys[WebButtonAdapter]
-        A_Disp[MockDisplay / LCD Adapter]
-        A_Radio[Rylr998RadioAdapter / EspNow]
-        A_Web[WebServer Core 0 API]
+    subgraph ADAPTERS["Adapters Layer (Hardware & Virtual)"]
+        A_Gyro["Mpu6050GyroscopeAdapter"]
+        A_Accel["Mpu6050AccelAdapter"]
+        A_Jerk["GyroscopeJerkAdapter"]
+        A_Baro["Bmp280BarometerAdapter"]
+        A_Alt["BarometerAltitudeAdapter"]
+        A_Water["TztWaterLevelAdapter"]
+        A_Sub["WaterLevelSubmersionAdapter"]
+        A_Alert["AlertDetectionAdapter"]
+        A_Keys["MatrixButtonPanelAdapter"]
+        A_WebKeys["WebButtonAdapter"]
+        A_Disp["MockDisplay / LCD Adapter"]
+        A_Radio["Rylr998RadioAdapter / EspNow"]
+        A_Web["WebServer API (Core 0)"]
     end
 
-    subgraph "Ports Layer (Abstract Interfaces)"
-        P_Gyro((GyroscopePort))
-        P_Accel((AccelPort))
-        P_Jerk((JerkPort))
-        P_Baro((BarometerPort))
-        P_Alt((AltitudePort))
-        P_Water((WaterLevelPort))
-        P_Sub((SubmersionPort))
-        P_Alert((AlertDetectionPort))
-        P_Keys((ButtonPanelPort))
-        P_Disp((DisplayPort))
-        P_Radio((RadioPort))
+    subgraph PORTS["Ports Layer (Abstract Interfaces)"]
+        P_Gyro(["GyroscopePort"])
+        P_Accel(["AccelPort"])
+        P_Jerk(["JerkPort"])
+        P_Baro(["BarometerPort"])
+        P_Alt(["AltitudePort"])
+        P_Water(["WaterLevelPort"])
+        P_Sub(["SubmersionPort"])
+        P_Alert(["AlertDetectionPort"])
+        P_Keys(["ButtonPanelPort"])
+        P_Disp(["DisplayPort"])
+        P_Radio(["RadioPort"])
     end
 
-    subgraph "Domain Core (MainDevice Application)"
-        CORE[MainDevice State Machine]
-        FEED[Message & Alert Feed Manager]
-        T9[Multi-Tap Text Engine]
-        MESH[Mesh Routing & Deduplication]
+    subgraph CORE_LAYER["Domain Core (MainDevice Application)"]
+        CORE["MainDevice State Machine"]
+        FEED["Message & Alert Feed Manager"]
+        T9["Multi-Tap Text Engine"]
+        MESH["Mesh Routing & Deduplication"]
     end
 
-    HW_MPU --> A_Gyro & A_Accel
+    HW_MPU --> A_Gyro
+    HW_MPU --> A_Accel
     HW_BMP --> A_Baro
     HW_WATER --> A_Water
     HW_KEYPAD --> A_Keys
-    HW_LCD <-- A_Disp
-    HW_LORA <--> A_Radio
-    HW_ESPNOW <--> A_Radio
-    HW_PHONE <--> A_Web & A_WebKeys
+    A_Disp --> HW_LCD
+    HW_LORA --> A_Radio
+    A_Radio --> HW_LORA
+    HW_ESPNOW --> A_Radio
+    A_Radio --> HW_ESPNOW
+    HW_PHONE --> A_Web
+    HW_PHONE --> A_WebKeys
 
     A_Gyro --> P_Gyro
     A_Accel --> P_Accel
-    A_Gyro --> A_Jerk --> P_Jerk
-    A_Baro --> A_Alt --> P_Alt
-    A_Water --> A_Sub --> P_Sub
-    P_Jerk & P_Alt & P_Sub & P_Accel --> A_Alert --> P_Alert
+    A_Gyro --> A_Jerk
+    A_Jerk --> P_Jerk
+    A_Baro --> A_Alt
+    A_Alt --> P_Alt
+    A_Water --> A_Sub
+    A_Sub --> P_Sub
+
+    P_Jerk --> A_Alert
+    P_Alt --> A_Alert
+    P_Sub --> A_Alert
+    P_Accel --> A_Alert
+    A_Alert --> P_Alert
+
     A_Keys --> P_Keys
     A_WebKeys --> P_Keys
     A_Disp --> P_Disp
@@ -143,10 +156,15 @@ graph TD
 
     P_Alert --> CORE
     P_Keys --> CORE
-    P_Disp <-- CORE
-    P_Radio <--> CORE
-    CORE --- FEED & T9 & MESH
+    CORE --> P_Disp
+    CORE --> P_Radio
+    P_Radio --> CORE
+
+    CORE --- FEED
+    CORE --- T9
+    CORE --- MESH
 ```
+
 
 ---
 
@@ -185,7 +203,7 @@ sequenceDiagram
     Note over NodeB: Schedules relay with random jitter (100-500ms)
     Note over NodeC: Schedules relay with random jitter (100-500ms)
     NodeB->>NodeD: R|NodeA|FFFFFFFF|42|6|SOS: Trap in cave
-    NodeB-->>NodeC: (Node C snoops Node B's relay -> cancels own duplicate relay)
+    NodeB-->>NodeC: (Node C snoops Node B relay and cancels duplicate relay)
     Note over NodeD: Dest matches / Broadcast. Dispatches to LCD & Feed
 ```
 
