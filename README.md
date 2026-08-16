@@ -57,6 +57,51 @@ The `node` PlatformIO environment defines `PIPSURVIVOR_RADIO_RYLR998`. Defining 
 
 The code is organized as ports and adapters under `lib/core/src`, but it is not a strict dependency-isolated Clean Architecture implementation: the application entry point constructs and coordinates the concrete adapters.
 
+```mermaid
+flowchart LR
+    subgraph Hardware
+        MPU["MPU6050 gyroscope"]
+        BMP["BMP280 barometer"]
+        WATER["Water-level sensor"]
+        KEYPAD["4x4 keypad"]
+        LORA["RYLR998"]
+        BROWSER["Browser"]
+    end
+
+    subgraph Adapters
+        GYRO["Mpu6050GyroscopeAdapter<br/>GyroscopeJerkAdapter"]
+        ALT["Bmp280BarometerAdapter<br/>BarometerAltitudeAdapter"]
+        SUB["TztWaterLevelAdapter<br/>WaterLevelSubmersionAdapter"]
+        BUTTONS["MatrixButtonPanelAdapter<br/>WebButtonAdapter"]
+        ALERT["AlertDetectionAdapter"]
+        RADIO["Rylr998RadioAdapter"]
+        DISPLAY["MockDisplayAdapter"]
+        WEB["WebServer"]
+    end
+
+    subgraph Ports
+        SENSOR_PORTS["JerkPort / AltitudePort<br/>SubmersionPort"]
+        BUTTON_PORT["ButtonPanelPort"]
+        ALERT_PORT["AlertDetectionPort"]
+        RADIO_PORT["RadioPort"]
+        DISPLAY_PORT["DisplayPort"]
+    end
+
+    CORE["MainDevice<br/>UI, feeds, alerts, composition"]
+
+    MPU --> GYRO --> SENSOR_PORTS
+    BMP --> ALT --> SENSOR_PORTS
+    WATER --> SUB --> SENSOR_PORTS
+    SENSOR_PORTS --> ALERT --> ALERT_PORT --> CORE
+    KEYPAD --> BUTTONS
+    BROWSER --> WEB
+    WEB --> BUTTONS --> BUTTON_PORT --> CORE
+    WEB --> CORE
+    LORA <--> RADIO
+    RADIO <--> RADIO_PORT <--> CORE
+    CORE --> DISPLAY_PORT --> DISPLAY
+```
+
 ## Alert detection
 
 Enabled alert sensors are polled every 250 ms. The configured main-application policy is:
@@ -105,6 +150,24 @@ The RYLR998 adapter maintains:
 - A random 100–500 ms delay before forwarding.
 - Cancellation of a matching pending relay when the same sender/message ID is overheard.
 
+```mermaid
+sequenceDiagram
+    autonumber
+    participant A as Origin A
+    participant B as Relay B
+    participant C as Relay C
+    participant D as Receiver D
+
+    A->>B: M|sender|ffffffff|42|7|message
+    A->>C: M|sender|ffffffff|42|7|message
+    Note over B,C: Mark sender/message ID as seen
+    Note over B,C: Schedule TTL 6 relay after 100–500 ms
+    B->>D: R|sender|ffffffff|42|6|message
+    B-->>C: C overhears the same sender/message ID
+    Note over C: Cancel matching pending relay
+    Note over D: Record, deliver, and schedule another relay if eligible
+```
+
 Packets are transmitted with `AT+SEND=0,<length>,<packet>`. The adapter reports a send as successful after writing the command; it does not wait for a module response or end-to-end acknowledgement. Constants for acknowledgement timeout and retries exist in `settings.h`, but acknowledgement/retry behavior is not implemented.
 
 The ESP-NOW adapter uses a separate `TYPE|HOPS|PAYLOAD` broadcast format. It does not implement the RYLR998 mesh logic.
@@ -112,6 +175,31 @@ The ESP-NOW adapter uses a separate `TYPE|HOPS|PAYLOAD` broadcast format. It doe
 ## User interface
 
 The display model contains three strings (`line1`, `line2`, and a hint in `line3`). The active display adapter is constructed as 16 columns by 2 rows, so Serial output represents two display rows; the browser separately renders the third hint row.
+
+```mermaid
+stateDiagram-v2
+    [*] --> Inbox
+
+    Inbox --> Menu: A
+    Inbox --> Inbox: B / C select message
+    Inbox --> Inbox: * / # pan text
+
+    Menu --> Compose: 1
+    Menu --> Alerts: 2
+    Menu --> Inbox: 3 / A / #
+
+    Alerts --> Menu: A
+    Alerts --> Alerts: B / C select alert
+    Alerts --> Alerts: * / # pan text
+
+    Compose --> Compose: 0–9 multi-tap
+    Compose --> Compose: B commit / D backspace
+    Compose --> Inbox: C send succeeds
+    Compose --> Menu: A cancel
+    Compose --> Error: send fails
+
+    Error --> Inbox: A acknowledge
+```
 
 ### State controls
 
